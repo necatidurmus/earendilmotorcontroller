@@ -116,7 +116,7 @@ Dışarıya açılan fonksiyonlar:
 - `currentOffset`: kalibrasyon ofset değeri
 - `currentDelta`: filtered - offset (koruma kararları bu değere göre)
 - `voltageRaw`: VSENSE ham ADC
-- `estimatedAmps`: tahmini amper (INA181 kazancı bilinmiyorsa güvenilmez)
+- `estimatedAmps`: tahmini amper (INA181A1, gain=20 V/V — `gain` komutuyla ayarlanabilir)
 - `softLimitActive`: soft limit aktif mi
 - `hardStrikes`: ardışık hard limit aşım sayısı
 
@@ -148,24 +148,6 @@ Bu projede aktif modüller:
 - `HAL_GPIO_MODULE_ENABLED`, `HAL_RCC_MODULE_ENABLED`, `HAL_CORTEX_MODULE_ENABLED`, `HAL_FLASH_MODULE_ENABLED`, `HAL_PWR_MODULE_ENABLED`
 
 Kullanılmayan modüller devre dışıdır → derleme boyutu küçüktür.
-
----
-
-### `usbd_conf.h`
-
-**USB Device donanım soyutlama katmanı.**
-
-STM32F411 USB OTG FS (PA11/PA12) için HAL PCD entegrasyonu. Endpoint sayısı, bellek ayarları, debug seviyesi tanımlar.
-
-CDC modda CLI_TRANSPORT_CDC seçildiğinde kullanılır.
-
----
-
-### `usbd_conf.c`
-
-**USB Device donanım yapılandırması.**
-
-`CLI_TRANSPORT_CDC` aktifken `board_io.c` tarafından `MX_USB_DEVICE_Init()` üzerinden çağrılır. USB stack init, endpoint yapılandırması, CDC sınıfı ayarlarını içerir.
 
 ---
 

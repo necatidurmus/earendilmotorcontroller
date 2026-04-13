@@ -52,16 +52,3 @@
 | PA1 | TIM2_CH2 veya ekstra ADC |
 | PA5 | SPI1_SCK veya ekstra GPIO |
 | PB12 | TIM1_BKIN (harici overcurrent trip) |
-
-### USB CDC (Alternatif CLI Taşıması)
-
-| MCU Pin | Fonksiyon | Not |
-|---|---|---|
-| PA11 | OTG_FS_DM (D-) | USB Full-Speed |
-| PA12 | OTG_FS_DP (D+) | USB Full-Speed |
-
-`motor_config.h` içinde `CLI_TRANSPORT` seçimi:
-- `CLI_TRANSPORT_UART` (varsayılan): USART2 PA2/PA3, 115200 baud
-- `CLI_TRANSPORT_CDC`: USB CDC, PA11/PA12 üzerinden sanal seri port
-
-CDC seçildiğinde SYSCLK 100→96 MHz düşer (USB 48 MHz PLLQ gereksinimi). Tüm timer hesapları bu saate göre yapılır.

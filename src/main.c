@@ -64,6 +64,13 @@ void MotorControl_Tick(void) {
         return;
     }
 
+    /* 2.1) Undervoltage kontrolü */
+    if (Prot_CheckUndervoltage()) {
+        g_runMode = RUN_STOPPED;
+        g_appliedDuty = 0;
+        return;
+    }
+
     /* 3) Durdurulmuş / fault / sıfır duty durumu */
     RunMode  mode    = (RunMode)g_runMode;
     uint16_t cmdDuty = g_commandDuty;
@@ -169,6 +176,7 @@ int main(void) {
     while (1) {
         /* Service CLI */
         CLI_Service();
+        BoardIO_KickWatchdog();
 
         /* LED blink every 400 ms */
         uint32_t nowMs = HAL_GetTick();

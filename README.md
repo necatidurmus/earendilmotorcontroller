@@ -15,10 +15,10 @@ Sensörlü 6-adım (6-step) trapezoidal komütasyon yapısı kullanan, STM32Cube
 | Bileşen | Detay |
 |---|---|
 | MCU | STM32F411CEU6 (WeAct Black Pill V3) |
-| Güç aşaması | 3x L6388ED013TR gate driver + 6x NMOS (part bilinmiyor) |
+| Güç aşaması | 3x L6388ED013TR gate driver + 6x IRFB7730 NMOS |
 | Bootstrap | 1 µF kapasitörler + diyotlar (her faz için) |
 | Gate direnci | 22 Ω |
-| Akım ölçümü | INA181 + 0.5 mΩ shunt (INA181 suffix bilinmiyor) |
+| Akım ölçümü | INA181A1 (gain=20 V/V) + 0.5 mΩ shunt |
 | Voltaj ölçümü | PA4, bölücü oranı şematikten hesaplanmış |
 | Hall sensörler | Dahili pull-up |
 | Besleme | Güç katı + 3.3V regülatör |
@@ -168,7 +168,6 @@ L6388 ayrı INH ve INL girişlerine sahiptir. TIM1_CHx → INH, TIM1_CHxN → IN
 | Fault latch | Çıkışlar kapalı, mod STOPPED, 'clear' olmadan tekrar çalışmaz |
 | Geçersiz hall | Çıkışlar hemen kapalı |
 | Undervoltage | **TODO** — VSENSE ölçeği doğrulanmadan eklenmedi |
-| Termal | **TODO** — NTC eklendikten sonra aktif edilecek |
 
 ---
 
@@ -241,21 +240,21 @@ pio device monitor --baud 115200
 
 | Konu | Durum |
 |---|---|
-| MOSFET part number | Bilinmiyor — Vds, Rds(on), Qg kontrol edilmeli |
-| INA181 suffix (kazanç) | Bilinmiyor — PCB üzerindeki markaj okunmalı |
-| Deadtime yeterliliği | 500 ns MCU + ~400 ns L6388 = ~900 ns — bench'te osiloskopla doğrulanmalı |
-| VSENSE bölücü oranı | Teorik hesap, gerçek R değerleri ölçülmeli |
+| MOSFET | IRFB7730 — Vds(max)=75V, Rds(on)=3.1mΩ, Qg=137nC [DOĞRULANDI] |
+| INA181 | INA181A1QDBVRQ1 — gain=20 V/V [DOĞRULANDI] |
+| Deadtime yeterliliği | ~521 ns MCU + ~300-400 ns L6388 = ~820-920 ns — bench'te osiloskopla doğrulanmalı |
+| VSENSE bölücü oranı | Teorik: 0.04472 (R_top=47k, R_bot=2.2k) — bench'te doğrulanmalı |
 | Hall profili | Profil 0 varsayılan — motora göre ayarlanmalı |
-| Geri yön | Bench'te doğrulanmadı — yanlışsa `backward`'ı test et |
+| Geri yön | Bench'te doğrulanmadı |
 
 ---
 
 ## 15. Gelecek Geliştirmeler
 
-- [ ] DMA veya timer-triggered ADC (blocking ADC → ISR yükü azalt)
+- [ ] Phase 1: Konfigürasyon kalibrasyonu (hall, akım, duty, ramp)
 - [ ] TIM1 Break girişine OCP bağlantısı (donanım overcurrent trip)
+- [ ] DMA veya timer-triggered ADC (blocking ADC → ISR yükü azalt)
 - [ ] Undervoltage koruması (VSENSE doğrulandığında)
-- [ ] Termal koruma (NTC eklendikten sonra)
-- [ ] Hız geri beslemesi (hall geçiş süresi → RPM)
+- [ ] IWDG watchdog timer
+- [ ] RPM / hız geri bildirimi (hall geçiş süresi → RPM)
 - [ ] Closed-loop PI hız kontrolü
-- [ ] USB CDC CLI (UART2 yerine, PA9/PA10'u kurtarmak için)

@@ -20,6 +20,7 @@
 #define HAL_PWR_MODULE_ENABLED
 #define HAL_FLASH_MODULE_ENABLED
 #define HAL_EXTI_MODULE_ENABLED
+#define HAL_IWDG_MODULE_ENABLED
 
 /* === Oscillator Configuration === */
 #if !defined(HSE_VALUE)
@@ -107,6 +108,10 @@ void assert_failed(uint8_t *file, uint32_t line);
 
 #ifdef HAL_EXTI_MODULE_ENABLED
 #include "stm32f4xx_hal_exti.h"
+#endif
+
+#ifdef HAL_IWDG_MODULE_ENABLED
+#include "stm32f4xx_hal_iwdg.h"
 #endif
 
 #endif /* STM32F4XX_HAL_CONF_H */

@@ -43,11 +43,19 @@ static uint8_t  linePos = 0;
 static uint32_t lastRxTick = 0;
 
 /* ====================================================================
- * UART helpers
+ * Transport helpers
  * ==================================================================== */
 
+static void cliTransportWrite(const uint8_t *data, uint16_t len) {
+    HAL_UART_Transmit(&huart2, (uint8_t *)data, len, 100);
+}
+
+static int cliTransportRead(uint8_t *c) {
+    return (HAL_UART_Receive(&huart2, c, 1, 0) == HAL_OK);
+}
+
 static void cliPrint(const char *s) {
-    HAL_UART_Transmit(&huart2, (uint8_t *)s, strlen(s), 100);
+    cliTransportWrite((const uint8_t *)s, (uint16_t)strlen(s));
 }
 
 static void cliPrintln(const char *s) {
@@ -68,7 +76,7 @@ static void cliPrintUint(uint32_t val) {
     }
     for (int j = i - 1; j >= 0; --j) {
         char c = buf[j];
-        HAL_UART_Transmit(&huart2, (uint8_t *)&c, 1, 50);
+        cliTransportWrite((const uint8_t *)&c, 1);
     }
 }
 
@@ -185,6 +193,18 @@ static void cmdStatus(void) {
     cliPrintUint(pcfg.hardLimitAdc);
     cliPrintln("");
 
+    UndervoltageConfig ucfg;
+    Prot_GetUndervoltageConfig(&ucfg);
+    cliPrint("UV en=");
+    cliPrint(ucfg.enabled ? "1" : "0");
+    cliPrint(" lim_mV=");
+    cliPrintUint(ucfg.limitMv);
+    cliPrint(" hyst_mV=");
+    cliPrintUint(ucfg.hysteresisMv);
+    cliPrint(" strikes=");
+    cliPrintUint(ucfg.strikesToTrip);
+    cliPrintln("");
+
     cliPrint("Fault: ");
     cliPrintln(Prot_IsFaulted() ? Prot_GetFaultReason() : "none");
 
@@ -220,8 +240,12 @@ static void cmdStatus(void) {
     cliPrintUint(ps.currentDelta);
     cliPrint(" estA=");
     cliPrintFloat(ps.estimatedAmps, 2);
-    cliPrint(" V raw=");
+    cliPrint(" V est=");
+    cliPrintFloat(ps.estimatedVolts, 2);
+    cliPrint(" raw=");
     cliPrintUint(ps.voltageRaw);
+    cliPrint(" uvStrikes=");
+    cliPrintUint(ps.undervoltageStrikes);
     cliPrintln("");
 
     /* Active commutation state */
@@ -268,7 +292,11 @@ static void cmdCurrent(void) {
     cliPrint(ps.softLimitActive ? "ACT" : "off");
     cliPrint(" strikes=");
     cliPrintUint(ps.hardStrikes);
-    cliPrint(" | V raw=");
+    cliPrint(" uv=");
+    cliPrintUint(ps.undervoltageStrikes);
+    cliPrint(" | V est=");
+    cliPrintFloat(ps.estimatedVolts, 2);
+    cliPrint(" raw=");
     cliPrintUint(ps.voltageRaw);
     cliPrintln("");
 }
@@ -360,6 +388,67 @@ static void cmdClear(void) {
     cliPrintln("Fault cleared");
 }
 
+static void cmdUv(const char *limStr, const char *hystStr, const char *strikesStr) {
+    if (!limStr || !hystStr || !strikesStr) {
+        cliPrintln("Usage: uv <limit_mV> <hyst_mV> <strikes>");
+        return;
+    }
+
+    long lim = atol(limStr);
+    long hyst = atol(hystStr);
+    long strikes = atol(strikesStr);
+
+    if (lim < 1000 || lim > 60000) {
+        cliPrintln("limit range: 1000..60000 mV");
+        return;
+    }
+    if (hyst < 0 || hyst > 5000) {
+        cliPrintln("hyst range: 0..5000 mV");
+        return;
+    }
+    if (strikes < 1 || strikes > 50) {
+        cliPrintln("strikes range: 1..50");
+        return;
+    }
+
+    UndervoltageConfig cfg;
+    Prot_GetUndervoltageConfig(&cfg);
+    cfg.limitMv = (uint16_t)lim;
+    cfg.hysteresisMv = (uint16_t)hyst;
+    cfg.strikesToTrip = (uint8_t)strikes;
+    Prot_SetUndervoltageConfig(&cfg);
+
+    cliPrint("UV cfg set: lim=");
+    cliPrintUint(cfg.limitMv);
+    cliPrint(" hyst=");
+    cliPrintUint(cfg.hysteresisMv);
+    cliPrint(" strikes=");
+    cliPrintUint(cfg.strikesToTrip);
+    cliPrintln("");
+}
+
+static void cmdUven(const char *arg) {
+    if (!arg) {
+        cliPrintln("Usage: uven <0|1>");
+        return;
+    }
+
+    long en = atol(arg);
+    if (en != 0 && en != 1) {
+        cliPrintln("Range: 0|1");
+        return;
+    }
+
+    UndervoltageConfig cfg;
+    Prot_GetUndervoltageConfig(&cfg);
+    cfg.enabled = (en != 0);
+    Prot_SetUndervoltageConfig(&cfg);
+
+    cliPrint("UV enable=");
+    cliPrint(cfg.enabled ? "1" : "0");
+    cliPrintln("");
+}
+
 static void cmdHelp(void) {
     cliPrintln("");
     cliPrintln("Earendil BLDC Controller CLI");
@@ -376,6 +465,8 @@ static void cmdHelp(void) {
     cliPrintln("  offset <-5..5>  state offset");
     cliPrintln("  map <0..3>      hall profile");
     cliPrintln("  limits s h      current limits");
+    cliPrintln("  uv l h s        uv cfg mV,mV,strikes");
+    cliPrintln("  uven <0|1>      enable/disable uv fault");
     cliPrintln("  gain <1..1000>  INA gain for estA");
     cliPrintln("  zeroi           recalibrate offset");
     cliPrintln("  clear           clear fault");
@@ -399,6 +490,7 @@ static void dispatch(char *line) {
 
     char *arg1 = strtok(NULL, " \t");
     char *arg2 = strtok(NULL, " \t");
+    char *arg3 = strtok(NULL, " \t");
 
     if      (!strcmp(cmd, "forward")  || !strcmp(cmd, "f")) cmdSetMode(RUN_FORWARD);
     else if (!strcmp(cmd, "backward") || !strcmp(cmd, "b")) cmdSetMode(RUN_BACKWARD);
@@ -412,6 +504,8 @@ static void dispatch(char *line) {
     else if (!strcmp(cmd, "offset"))  cmdOffset(arg1);
     else if (!strcmp(cmd, "map"))     cmdMap(arg1);
     else if (!strcmp(cmd, "limits"))  cmdLimits(arg1, arg2);
+    else if (!strcmp(cmd, "uv"))      cmdUv(arg1, arg2, arg3);
+    else if (!strcmp(cmd, "uven"))    cmdUven(arg1);
     else if (!strcmp(cmd, "gain"))    cmdGain(arg1);
     else if (!strcmp(cmd, "zeroi"))   cmdZeroi();
     else if (!strcmp(cmd, "clear"))   cmdClear();
@@ -434,7 +528,7 @@ void CLI_Init(void) {
 void CLI_Service(void) {
     uint8_t c;
 
-    while (HAL_UART_Receive(&huart2, &c, 1, 0) == HAL_OK) {
+    while (cliTransportRead(&c)) {
         lastRxTick = HAL_GetTick();
 
         if (c == '\r' || c == '\n') {
@@ -462,4 +556,5 @@ void CLI_Service(void) {
         dispatch(lineBuf);
         linePos = 0;
     }
+
 }

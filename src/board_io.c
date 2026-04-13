@@ -22,10 +22,6 @@
 #include "board_io.h"
 #include <string.h>
 
-#if CLI_TRANSPORT == CLI_TRANSPORT_CDC
-#include "usb_device.h"
-#endif
-
 /* ====================================================================
  * HAL handle tanımları — motor_config.h'de extern olarak bildirilmiş
  * ==================================================================== */
@@ -34,6 +30,7 @@ TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim3;
 ADC_HandleTypeDef hadc1;
 UART_HandleTypeDef huart2;
+static IWDG_HandleTypeDef hiwdg;
 
 /* ====================================================================
  * DWT mikrosaniye zamanlayıcısı
@@ -53,12 +50,11 @@ static void DWT_Init(void) {
  * Sistem Saati — 25 MHz HSE'den 96 MHz
  *
  * Neden 96 MHz (100 değil)?
- *   USB Full-Speed için VCO/PLLQ = 48 MHz kesinlikle gereklidir.
- *   VCO = 192 MHz → PLLQ=4 → USB = 48 MHz ✓
+ *   Saat ağacında VCO=192 MHz hedeflenir.
+ *   SYSCLK = VCO/PLLP = 192/2 = 96 MHz.
  *   SYSCLK = VCO/PLLP = 192/2 = 96 MHz
  *
- *   PLLN=200 ile VCO=200 MHz → USB=50 MHz: USB ÇALIŞMAZ.
- *   PLLN=192 ile VCO=192 MHz → USB=48 MHz: USB ÇALIŞIR.
+ *   PLLN=192 ile VCO=192 MHz seçilidir.
  *
  * HSE=25MHz, M=25, N=192, P=2 → SYSCLK=96 MHz
  * APB1 bölücü=2 → APB1=48 MHz, timer saati=96 MHz (x2)
@@ -83,7 +79,7 @@ void BoardIO_InitClock(void) {
     RCC_OscInitStruct.PLL.PLLM       = 25;   /* VCO giriş = 1 MHz */
     RCC_OscInitStruct.PLL.PLLN       = 192;  /* VCO = 192 MHz */
     RCC_OscInitStruct.PLL.PLLP       = RCC_PLLP_DIV2;  /* SYSCLK = 96 MHz */
-    RCC_OscInitStruct.PLL.PLLQ       = 4;    /* USB = 192/4 = 48 MHz ← kritik */
+    RCC_OscInitStruct.PLL.PLLQ       = 4;    /* PLLQ = 4 */
 
     if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) {
         /* Saat hatası — LED yanıp söndür, takılı kal */
@@ -331,7 +327,7 @@ void BoardIO_InitADC(void) {
         while (1);
     }
 
-    /* ADC ön bölücü: PCLK2/4 = 25 MHz */
+    /* ADC ön bölücü: PCLK2/4 = 24 MHz */
     ADC1_COMMON->CCR = ADC_CCR_ADCPRE_0;  /* 01 = /4 */
 }
 
@@ -353,7 +349,7 @@ uint16_t BoardIO_ReadADC(uint32_t channel) {
 
     hadc1.Instance->CR2 |= ADC_CR2_SWSTART;
 
-    /* EOC polling — ~96 döngü (3.84 us @ 25 MHz ADC clock), timeout at ~10 us */
+    /* EOC polling — ~96 döngü (4.00 us @ 24 MHz ADC clock), timeout at ~10 us */
     {
         uint32_t timeout = 1000;
         while (!(hadc1.Instance->SR & ADC_SR_EOC)) {
@@ -368,7 +364,7 @@ uint16_t BoardIO_ReadADC(uint32_t channel) {
  * USART2 Başlatma — CLI (PA2=TX, PA3=RX)
  *
  * PA9/PA10 TIM1_CH2/CH3 ile çakışır → USART2 PA2/PA3 kullanır.
- * USART2 APB1'de (50 MHz), 115200 baud sorunsuz çalışır.
+ * USART2 APB1'de (48 MHz), 115200 baud sorunsuz çalışır.
  * ==================================================================== */
 
 void BoardIO_InitUART(void) {
@@ -396,6 +392,34 @@ void BoardIO_InitUART(void) {
     if (HAL_UART_Init(&huart2) != HAL_OK) {
         while (1);
     }
+}
+
+/* ====================================================================
+ * IWDG — Independent Watchdog
+ * ==================================================================== */
+
+void BoardIO_InitWatchdog(void) {
+    __HAL_RCC_LSI_ENABLE();
+    while (__HAL_RCC_GET_FLAG(RCC_FLAG_LSIRDY) == RESET) {
+    }
+
+    hiwdg.Instance = IWDG;
+    hiwdg.Init.Prescaler = IWDG_PRESCALER_32;
+
+    uint32_t reload = (IWDG_TIMEOUT_MS > 0U) ? (IWDG_TIMEOUT_MS - 1U) : 1U;
+    if (reload > 0x0FFFU) {
+        reload = 0x0FFFU;
+    }
+    hiwdg.Init.Reload = reload;
+
+    if (HAL_IWDG_Init(&hiwdg) != HAL_OK) {
+        while (1) {
+        }
+    }
+}
+
+void BoardIO_KickWatchdog(void) {
+    HAL_IWDG_Refresh(&hiwdg);
 }
 
 /* ====================================================================
@@ -474,14 +498,9 @@ void BoardIO_InitAll(void) {
     BoardIO_InitPWM();        /* TIM1 komplementer + deadtime */
     BoardIO_InitControlTimer();
 
-#if CLI_TRANSPORT == CLI_TRANSPORT_UART
-    /* UART modda: USART2 PA2/PA3 başlat */
     BoardIO_InitUART();
-#else
-    /* CDC modda: USB device stack başlat */
-    MX_USB_DEVICE_Init();
-    /* UART başlatılmaz — PA2/PA3 serbest kalır */
-#endif
 
     BoardIO_AllOff();         /* Güvenli başlangıç durumu */
+    BoardIO_InitWatchdog();
+    BoardIO_KickWatchdog();
 }

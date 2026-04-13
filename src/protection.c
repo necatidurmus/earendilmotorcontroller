@@ -29,6 +29,13 @@ static ProtectionConfig protCfg = {
     .hardStrikesToTrip = HARD_LIMIT_STRIKES
 };
 
+static UndervoltageConfig uvCfg = {
+    .enabled = (UNDERVOLTAGE_PROTECTION_ENABLE != 0U),
+    .limitMv = UNDERVOLTAGE_LIMIT_MV,
+    .hysteresisMv = UNDERVOLTAGE_HYSTERESIS_MV,
+    .strikesToTrip = UNDERVOLTAGE_STRIKES
+};
+
 /* ADC state */
 static uint8_t  adcDecimator = 0;
 static uint16_t currentRaw = 0;
@@ -41,6 +48,7 @@ static bool     filterInitialized = false;
 /* Protection state */
 static volatile bool     softLimitActive = false;
 static volatile uint8_t  hardStrikes = 0;
+static volatile uint8_t  undervoltageStrikes = 0;
 static volatile bool     faultLatched = false;
 static char              faultReason[FAULT_REASON_MAX] = "none";
 
@@ -72,8 +80,14 @@ void Prot_Init(const ProtectionConfig *cfg) {
     filterInitialized = false;
     softLimitActive = false;
     hardStrikes = 0;
+    undervoltageStrikes = 0;
     faultLatched = false;
     strncpy(faultReason, "none", sizeof(faultReason) - 1);
+
+    uvCfg.enabled = (UNDERVOLTAGE_PROTECTION_ENABLE != 0U);
+    uvCfg.limitMv = UNDERVOLTAGE_LIMIT_MV;
+    uvCfg.hysteresisMv = UNDERVOLTAGE_HYSTERESIS_MV;
+    uvCfg.strikesToTrip = UNDERVOLTAGE_STRIKES;
 }
 
 void Prot_SampleTick(void) {
@@ -142,6 +156,39 @@ bool Prot_CheckHardLimit(void) {
     return false;
 }
 
+bool Prot_CheckUndervoltage(void) {
+    if (faultLatched) {
+        return true;
+    }
+
+#if UNDERVOLTAGE_PROTECTION_ENABLE
+    if (!uvCfg.enabled) {
+        undervoltageStrikes = 0;
+        return false;
+    }
+
+    const uint16_t uvLimitAdc = VSENSE_MV_TO_ADC(uvCfg.limitMv);
+    const uint16_t uvReleaseAdc = VSENSE_MV_TO_ADC(uvCfg.limitMv + uvCfg.hysteresisMv);
+
+    if (voltageRaw <= uvLimitAdc) {
+        if (undervoltageStrikes < 255U) {
+            ++undervoltageStrikes;
+        }
+
+        if (undervoltageStrikes >= uvCfg.strikesToTrip) {
+            Prot_LatchFault("undervoltage");
+            return true;
+        }
+    } else if (voltageRaw >= uvReleaseAdc) {
+        undervoltageStrikes = 0;
+    }
+#else
+    undervoltageStrikes = 0;
+#endif
+
+    return false;
+}
+
 uint16_t Prot_SlewDuty(uint16_t current, uint16_t target) {
     if (current < target) {
         uint32_t next = (uint32_t)current + DUTY_RAMP_UP_STEP;
@@ -182,6 +229,7 @@ void Prot_LatchFault(const char *reason) {
 void Prot_ClearFault(void) {
     faultLatched = false;
     hardStrikes = 0;
+    undervoltageStrikes = 0;
     strncpy(faultReason, "none", sizeof(faultReason) - 1);
     faultReason[sizeof(faultReason) - 1] = '\0';
 }
@@ -203,15 +251,44 @@ void Prot_GetConfig(ProtectionConfig *cfg) {
     *cfg = protCfg;
 }
 
+void Prot_SetUndervoltageConfig(const UndervoltageConfig *cfg) {
+    if (!cfg) {
+        return;
+    }
+
+    uvCfg.enabled = cfg->enabled;
+
+    if (cfg->limitMv >= 1000U && cfg->limitMv <= 60000U) {
+        uvCfg.limitMv = cfg->limitMv;
+    }
+
+    if (cfg->hysteresisMv <= 5000U) {
+        uvCfg.hysteresisMv = cfg->hysteresisMv;
+    }
+
+    if (cfg->strikesToTrip >= 1U && cfg->strikesToTrip <= 50U) {
+        uvCfg.strikesToTrip = cfg->strikesToTrip;
+    }
+}
+
+void Prot_GetUndervoltageConfig(UndervoltageConfig *cfg) {
+    if (!cfg) {
+        return;
+    }
+    *cfg = uvCfg;
+}
+
 void Prot_GetSnapshot(ProtectionSnapshot *snap) {
     snap->currentRaw = currentRaw;
     snap->currentFiltered = (uint16_t)currentFiltered;
     snap->currentOffset = currentOffset;
     snap->currentDelta = currentDelta;
     snap->voltageRaw = voltageRaw;
+    snap->estimatedVolts = Prot_GetEstimatedVolts();
     snap->estimatedAmps = Prot_GetEstimatedAmps();
     snap->softLimitActive = softLimitActive;
     snap->hardStrikes = hardStrikes;
+    snap->undervoltageStrikes = undervoltageStrikes;
 }
 
 void Prot_SetInaGain(float gain) {
@@ -223,4 +300,8 @@ void Prot_SetInaGain(float gain) {
 float Prot_GetEstimatedAmps(void) {
     float senseVoltage = ((float)currentDelta * ADC_VREF) / ADC_MAX_COUNTS;
     return senseVoltage / (inaGain * SHUNT_OHMS);
+}
+
+float Prot_GetEstimatedVolts(void) {
+    return VSENSE_ADC_TO_V(voltageRaw);
 }

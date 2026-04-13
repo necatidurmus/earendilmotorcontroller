@@ -2,7 +2,7 @@
  * cli.h — Serial command-line interface for motor bring-up
  *
  * Uses USART2 (PA2=TX, PA3=RX) for all commands and telemetry.
- * USB CDC can be added later — UART is simpler to get running first.
+ * Transport is UART-only.
  *
  * Commands:
  *   forward/f, backward/b, stop/s — motor direction
@@ -15,7 +15,7 @@
  *   offset <-5..5>                 — commutation state offset
  *   map <0..3>                     — hall mapping profile
  *   limits <soft> <hard>           — current limits (ADC counts)
- *   gain <20|50|100|200>           — INA gain for current display
+ *   gain <1..1000>                 — INA gain for current display
  *   zeroi                          — recalibrate ISENSE offset
  *   clear                          — clear latched fault
  *   help/?                         — help text
