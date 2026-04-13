@@ -1,23 +1,24 @@
 /*
- * motor_config.h — Earendil BLDC motor controller configuration
+ * motor_config.h — Earendil BLDC motor controller konfigürasyonu
  *
- * All hardware-dependent constants, tuning parameters, and design assumptions
- * for the STM32F411 Black Pill + L6388 + 6-NMOS sensored 6-step BLDC driver.
+ * STM32F411 Black Pill + L6388 + 6-NMOS sensörlü 6-adım BLDC sürücüsü
+ * için tüm donanım bağımlı sabitler, ayar parametreleri ve tasarım varsayımları.
  *
- * Sections:
- *   1. Board pin mapping (confirmed from working firmware)
- *   2. Timer and PWM settings
- *   3. Hall sensor processing
- *   4. ADC and current sensing
- *   5. Duty cycle and ramp
- *   6. Protection thresholds
- *   7. Fault and timeout
- *   8. CLI / serial
- *   9. Hall map profiles
+ * Bölümler:
+ *   1. Kart pin haritası (çalışan firmware'den doğrulanmış)
+ *   2. Timer ve PWM ayarları
+ *   3. Hall sensör işleme
+ *   4. ADC ve akım ölçümü
+ *   5. Görev döngüsü ve rampa
+ *   6. Koruma eşikleri
+ *   7. Fault ve timeout
+ *   8. CLI / seri iletişim
+ *   9. Hall harita profilleri
  *
- * Values marked [CALIBRATED] were measured on real hardware.
- * Values marked [DESIGN] are theoretical / from schematic.
- * Values marked [TUNING] are starting points that need bench adjustment.
+ * [KALIBRASYON]  = Gerçek donanımda ölçüldü
+ * [TASARIM]      = Teorik / şematikten
+ * [AYAR]         = Bench testinde kalibre edilmesi gereken başlangıç değeri
+ * [BİLİNMİYOR]   = Donanım belirsizliği, bench'te doğrulanmalı
  */
 
 #ifndef MOTOR_CONFIG_H
@@ -68,144 +69,162 @@
 #define LED_PIN             GPIO_PIN_13
 
 /* ====================================================================
- * 2. Timer and PWM settings — DESIGN
+ * 2. Timer ve PWM ayarları — [TASARIM]
  * ==================================================================== */
 
 /*
- * STM32F411 clock tree (configured in board_io.c):
+ * STM32F411 saat ağacı (board_io.c'de yapılandırılmış):
  *   HSE = 25 MHz -> PLL -> SYSCLK = 100 MHz
- *   APB1 = 50 MHz, APB1 timer clock = 100 MHz (x2)
- *   APB2 = 100 MHz, APB2 timer clock = 200 MHz (x2)
+ *   APB1 = 50 MHz, APB1 timer saati = 100 MHz (x2, çünkü APB1 bölücü != 1)
+ *   APB2 = 100 MHz, APB2 timer saati = 200 MHz (x2, çünkü APB2 bölücü != 1)
  *
- * PWM timer: TIM1 (advanced timer, APB2 timer clock = 200 MHz)
- *   Prescaler = 1  -> 200 MHz / 2 = 100 MHz tick
- *   Period = 3332  -> 100 MHz / 3333 = ~30 kHz PWM
- *   Resolution: ~10 bits (0..3332 duty range)
+ * PWM timer: TIM1 (gelişmiş timer, APB2 timer saati = 200 MHz)
+ *   Ön bölücü = 1  -> 200 MHz / 2 = 100 MHz tick
+ *   Periyot = 3332  -> 100 MHz / 3333 = ~30 kHz PWM
+ *   Çözünürlük: ~10 bit (0..3332 duty aralığı)
+ *   Mod: Complementary (CH1/CH2/CH3 + CH1N/CH2N/CH3N)
  *
- * Control timer: TIM3 (general-purpose, APB1 timer clock = 100 MHz)
- *   Prescaler = 99 -> 100 MHz / 100 = 1 MHz tick (1 us resolution)
- *   Period = 79    -> 1 MHz / 80 = 12.5 kHz ISR
+ * Kontrol timer: TIM3 (genel amaçlı, APB1 timer saati = 100 MHz)
+ *   Ön bölücü = 99 -> 100 MHz / 100 = 1 MHz tick (1 us çözünürlük)
+ *   Periyot = 79   -> 1 MHz / 80 = 12.5 kHz ISR
+ *
+ * TIM1 Deadtime:
+ *   100 MHz tick, 1 tick = 10 ns
+ *   DEADTIME_COUNTS = 50 -> 500 ns yazılımdan deadtime
+ *   L6388 ayrıca ~300-400 ns dahili deadtime ekler
+ *   Toplam efektif = ~800-900 ns — bench'te osiloskopla doğrulan
  */
 
-/* PWM configuration */
+/* PWM konfigürasyonu */
 #define PWM_TIMER_HANDLE    htim1
 #define PWM_FREQ_HZ         30000U
 #define PWM_PERIOD_COUNTS   3332U       /* 100 MHz / 2 / 3333 = ~30 kHz */
-#define PWM_DUTY_MAX        3332U       /* full ON = period */
+#define PWM_DUTY_MAX        3332U       /* tam açık = periyot */
 
-/* Control loop timer — TIM3 */
+/*
+ * Deadtime sayacı: TIM1 BDTR DTG alanına yazılır.
+ * DTG[7:0] bit7=0 → deadtime = DTG × tdts (tdts = 1/100MHz = 10ns)
+ * 50 → 500 ns MCU-tarafı deadtime
+ * [AYAR] — güvenli başlangıç noktası. L6388 iç DT ile ~900 ns toplam.
+ */
+#define DEADTIME_COUNTS     50U
+
+/* Kontrol döngüsü timer — TIM3 */
 #define CTRL_TIMER_HANDLE   htim3
 #define CTRL_TIMER          TIM3
 #define CTRL_TIMER_PRESCALER 99U        /* 100 MHz / 100 = 1 MHz */
 #define CTRL_TIMER_PERIOD   79U         /* 1 MHz / 80 = 12.5 kHz */
-#define CTRL_TICK_HZ        12500U      /* [TUNING] control ISR frequency */
+#define CTRL_TICK_HZ        12500U      /* [AYAR] kontrol ISR frekansı */
 
 /* ====================================================================
- * 3. Hall sensor processing — TUNING
+ * 3. Hall sensör işleme — [AYAR]
  * ==================================================================== */
 
-#define HALL_OVERSAMPLE     7           /* reads per sample, majority vote */
-#define MIN_STATE_INTERVAL_US  40U      /* debounce: min time between state changes */
-#define INVALID_HALL_HOLD_US   1500U    /* hold last valid state if hall invalid */
+#define HALL_OVERSAMPLE          7      /* örnekleme başına okuma, çoğunluk oyu */
+#define MIN_STATE_INTERVAL_US   40U    /* debounce: durum değişimleri arası min süre */
+#define INVALID_HALL_HOLD_US  1500U    /* hall geçersizse son geçerli durumu tut */
 
 /* ====================================================================
- * 4. ADC and current sensing — DESIGN (verify INA181 gain on bench)
+ * 4. ADC ve akım ölçümü — [TASARIM] (INA181 kazancı bench'te doğrulanmalı)
  * ==================================================================== */
 
 /*
- * Current sense chain:
- *   I_motor -> R_shunt (0.5 mΩ) -> INA181 (gain unknown) -> PA0 ADC
+ * Akım ölçüm zinciri:
+ *   I_motor -> R_shunt (0.5 mΩ) -> INA181 (kazanç bilinmiyor) -> PA0 ADC
  *
  * ADC: 12-bit, Vref = 3.3 V
  *   LSB = 3.3 / 4095 = 0.806 mV
  *
- * Display conversion assumes a configurable gain.
- * INA181 variants: A1=20, A2=50, A3=100, A4=200 V/V
- * [UNKNOWN] — must be confirmed on bench.
+ * Ekran dönüşümü ayarlanabilir kazanç üzerinden yapılır.
+ * INA181 varyantları: A1=20, A2=50, A3=100, A4=200 V/V
+ * [BİLİNMİYOR] — bench'te PCB üzerindeki suffix okunmalı.
+ *
+ * UYARI: Koruma kararları daima ham ADC delta üzerinden verilir.
+ * estimatedAmps sadece gösterimdedir, koruma için kullanılmamalıdır.
  */
-#define ADC_VREF            3.3f
-#define ADC_MAX_COUNTS      4095.0f
-#define SHUNT_OHMS          0.0005f     /* [DESIGN] 0.5 mΩ, 2512 package */
-#define INA_GAIN_DEFAULT    50.0f       /* [UNKNOWN] default guess = A2 variant */
+#define ADC_VREF             3.3f
+#define ADC_MAX_COUNTS       4095.0f
+#define SHUNT_OHMS           0.0005f    /* [TASARIM] 0.5 mΩ, 2512 paket */
+#define INA_GAIN_DEFAULT     50.0f      /* [BİLİNMİYOR] varsayılan tahmin = A2 varyantı */
 
-/* ADC sampling: decimated to reduce ISR load */
-#define ADC_DECIMATION      4           /* sample every 4th ISR tick = 3125 Hz */
-#define CURRENT_FILTER_ALPHA 0.20f      /* EMA low-pass coefficient [TUNING] */
-#define ADC_CALIBRATION_SAMPLES 128     /* offset calibration sample count */
+/* ADC örnekleme: ISR yükünü azaltmak için seyreltilmiş */
+#define ADC_DECIMATION       4          /* her 4. ISR tick'inde örnekle = 3125 Hz */
+#define CURRENT_FILTER_ALPHA 0.20f      /* EMA alçak geçiren katsayı [AYAR] */
+#define ADC_CALIBRATION_SAMPLES 128     /* ofset kalibrasyonu örnek sayısı */
 
-/* Voltage sense divider: R12=47k, R13=2.2k -> ratio = 2.2/(47+2.2) = 0.04472 */
-#define VSENSE_DIVIDER_RATIO 0.04472f   /* [DESIGN] verify on bench */
-#define VSENSE_VREF         3.3f
+/* Voltaj ölçüm bölücü: devre şemasından [TASARIM] — bench'te doğrulanmalı */
+#define VSENSE_DIVIDER_RATIO 0.04472f   /* R12=47k, R13=2.2k -> 2.2/(47+2.2) */
+#define VSENSE_VREF          3.3f
 
 /* ====================================================================
- * 5. Duty cycle and ramp — TUNING
+ * 5. Görev döngüsü ve rampa — [AYAR]
  * ==================================================================== */
 
-#define DUTY_DEFAULT        70U         /* initial command duty (0..255) */
-#define DUTY_MIN_ACTIVE     8U          /* minimum active duty to keep MOSFETs switching */
-#define DUTY_RAMP_UP_STEP   2U          /* duty counts per tick, ramp up */
-#define DUTY_RAMP_DOWN_STEP 4U          /* duty counts per tick, ramp down */
+#define DUTY_DEFAULT         70U        /* başlangıç komut değeri (0..255) */
+#define DUTY_MIN_ACTIVE      8U         /* MOSFET anahtarlamasını sürdürmek için min */
+#define DUTY_RAMP_UP_STEP    2U         /* tick başına artış adımı */
+#define DUTY_RAMP_DOWN_STEP  4U         /* tick başına azalış adımı */
 
-/* Convert duty from 0..255 range to 0..PWM_PERIOD_COUNTS */
-#define DUTY_TO_PWM(d)      ((uint16_t)((uint32_t)(d) * PWM_PERIOD_COUNTS / 255))
+/* Duty'yi 0..255'ten 0..PWM_PERIOD_COUNTS'a çevir */
+#define DUTY_TO_PWM(d)       ((uint16_t)((uint32_t)(d) * PWM_PERIOD_COUNTS / 255))
 
 /* ====================================================================
- * 6. Protection thresholds — TUNING
+ * 6. Koruma eşikleri — [AYAR]
  * ==================================================================== */
 
 /*
- * Current limits are in ADC delta counts (filtered ADC - offset).
- * These are raw 12-bit values, NOT converted to amps.
- * Use 'current' CLI command to see real-time delta and calibrate.
+ * Akım limitleri ADC delta count'ta (filtrelenmiş ADC - ofset).
+ * 12-bit ham değerler, amper DEĞİL.
+ * Gerçek zamanlı delta için 'current' CLI komutunu kullan.
  */
-#define CURRENT_SOFT_LIMIT  450U        /* back off duty above this delta */
-#define CURRENT_HARD_LIMIT  700U        /* latch fault above this delta */
-#define HARD_LIMIT_STRIKES  3           /* consecutive strikes to trip */
+#define CURRENT_SOFT_LIMIT   450U       /* bu deltanın üstünde duty azalt */
+#define CURRENT_HARD_LIMIT   700U       /* bu deltanın üstünde fault latched */
+#define HARD_LIMIT_STRIKES   3          /* latch için gereken ardışık aşım sayısı */
 
-/* Soft limit backoff: backoff = 3 + (over / 16), capped at 80 */
-#define SOFT_BACKOFF_MIN    3U
+/* Yumuşak limit geri çekim: backoff = 3 + (aşım / 16), max 80'de kesilir */
+#define SOFT_BACKOFF_MIN     3U
 #define SOFT_BACKOFF_DIVISOR 16U
-#define SOFT_BACKOFF_MAX    80U
+#define SOFT_BACKOFF_MAX     80U
 
 /* ====================================================================
- * 7. Fault and timeout — DESIGN
+ * 7. Fault ve timeout — [TASARIM]
  * ==================================================================== */
 
 #define FAULT_REASON_MAX    48
 
-/* TODO: add undervoltage threshold when VSENSE scaling is validated */
-/* TODO: add thermal limit if NTC is added to hardware */
+/* TODO: VSENSE ölçeği doğrulandığında undervoltage eşiği ekle */
+/* TODO: NTC eklenirse thermal limit ekle */
 
 /* ====================================================================
- * 8. CLI / serial — DESIGN
+ * 8. CLI / seri iletişim — [TASARIM]
  * ==================================================================== */
 
-#define CLI_BAUD            115200U
-#define CLI_LINE_BUF        96
-#define CLI_IDLE_PARSE_MS   120U        /* auto-parse if no newline received */
+#define CLI_BAUD             115200U
+#define CLI_LINE_BUF         96
+#define CLI_IDLE_PARSE_MS    120U       /* newline gelmezse otomatik parse */
 
-/* CLI uses USART2 on PA2/PA3 (PA9/PA10 conflict with TIM1 PWM) */
-#define CLI_UART_HANDLE     huart2
+/* CLI USART2 PA2/PA3 kullanır (PA9/PA10 TIM1 PWM ile çakışır) */
+#define CLI_UART_HANDLE      huart2
 
 /* ====================================================================
- * 9. Hall map profiles — DESIGN (from working firmware)
+ * 9. Hall harita profilleri — [TASARIM] (çalışan firmware'den)
  * ==================================================================== */
 
 /*
- * Index = corrected hall value (0..7)
- * Value = commutation state 0..5, or 255 for invalid
+ * Index = düzeltilmiş hall değeri (0..7)
+ * Değer = komütasyon durumu 0..5, veya 255 geçersiz için
  *
- * Profile 0: tested with the current motor wiring
- * Profiles 1-3: alternatives for different hall/phase orderings
+ * Profil 0: mevcut motor kablolamasıyla test edildi
+ * Profil 1-3: farklı hall/faz sıralamaları için alternatifler
+ *
+ * DİKKAT: Bu tablo hall.c'de tanımlıdır. Burada sadece extern bildirimi.
+ * Birden fazla .c dosyası bu header'ı include ettiğinde multiple definition
+ * hatası olmaması için static dizinin header'da bulunmaması gerekir.
  */
 #define HALL_PROFILE_COUNT  4
 
-static const uint8_t HALL_TO_STATE_PROFILES[HALL_PROFILE_COUNT][8] = {
-    {255, 0, 4, 5, 2, 1, 3, 255},
-    {255, 0, 2, 1, 4, 5, 3, 255},
-    {255, 4, 0, 1, 2, 3, 5, 255},
-    {255, 2, 4, 3, 0, 1, 5, 255}
-};
+/* Tablo hall.c'de tanımlı, burada extern bildirimi */
+extern const uint8_t HALL_TO_STATE_PROFILES[HALL_PROFILE_COUNT][8];
 
 /* ====================================================================
  * External HAL handles — defined in board_io.c

@@ -11,6 +11,18 @@
 #include "motor_config.h"
 #include "stm32f4xx_hal.h"
 
+/*
+ * Hall → komütasyon durumu dönüşüm tablosu.
+ * motor_config.h'de extern olarak bildirilir, burada tanımlanır.
+ * Index = XOR-düzeltilmiş ham hall (0..7), Değer = durum 0..5 veya 255=geçersiz
+ */
+const uint8_t HALL_TO_STATE_PROFILES[HALL_PROFILE_COUNT][8] = {
+    {255, 0, 4, 5, 2, 1, 3, 255},  /* Profil 0: mevcut motor kablolaması */
+    {255, 0, 2, 1, 4, 5, 3, 255},  /* Profil 1: alternatif sıralama */
+    {255, 4, 0, 1, 2, 3, 5, 255},  /* Profil 2: alternatif sıralama */
+    {255, 2, 4, 3, 0, 1, 5, 255},  /* Profil 3: alternatif sıralama */
+};
+
 /* Runtime configuration */
 static HallConfig hallCfg = {
     .profile = 0,
@@ -165,5 +177,5 @@ void Hall_GetSnapshot(HallSnapshot *snap) {
     snap->corrected = lastCorrected;
     snap->mapped = lastMapped;
     snap->accepted = lastAcceptedState;
-    snap->drive = currentDriveState;
+    snap->driveState = currentDriveState;
 }

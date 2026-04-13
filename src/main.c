@@ -1,29 +1,29 @@
 /*
- * main.c — Earendil BLDC Motor Controller entry point
+ * main.c — Earendil BLDC Motor Controller giriş noktası
  *
- * STM32F411 Black Pill + L6388 + 6-NMOS sensored 6-step BLDC driver
+ * STM32F411 Black Pill + L6388 + 6-NMOS sensörlü 6-adım BLDC sürücüsü
  *
- * Architecture:
- *   - TIM3 ISR at 12.5 kHz calls MotorControl_Tick()
- *   - Main loop handles CLI and LED blink only
- *   - No Arduino dependency — pure STM32Cube HAL
+ * Mimari:
+ *   - TIM3 ISR 12.5 kHz'de MotorControl_Tick() çağırır
+ *   - Ana döngü yalnızca CLI ve LED yanıp sönmeyi işler
+ *   - Arduino bağımlılığı yok — saf STM32Cube HAL
+ *   - Komütasyon: senkron komplementer PWM (TIM1 CHx + CHxN)
  *
- * Shared state between ISR and main loop:
- *   - g_runMode: volatile RunMode (written by CLI, read by ISR)
- *   - g_commandDuty: volatile uint16_t (written by CLI, read by ISR)
- *   - g_appliedDuty: volatile uint16_t (written by ISR, read by CLI)
- *   - g_isrTickCount: volatile uint32_t (written by ISR, read by CLI)
+ * ISR ve ana döngü arasında paylaşılan volatile durum:
+ *   - g_runMode: CLI tarafından yazılır, ISR tarafından okunur
+ *   - g_commandDuty: CLI tarafından yazılır, ISR tarafından okunur
+ *   - g_appliedDuty: ISR tarafından yazılır, CLI tarafından okunur
+ *   - g_isrTickCount: ISR tarafından yazılır, CLI tarafından okunur
  *
- * Safety:
- *   - On fault: outputs off immediately, duty zeroed, mode set to STOPPED
- *   - On invalid hall: outputs off
- *   - On hard overcurrent: latched fault, requires CLI 'clear'
- *   - On soft overcurrent: duty reduced proportionally
+ * Güvenlik:
+ *   - Fault: çıkışlar hemen kapalı, duty sıfır, mod STOPPED
+ *   - Geçersiz hall: çıkışlar kapalı
+ *   - Hard overcurrent: latch'li fault, CLI 'clear' gerekir
+ *   - Soft overcurrent: duty orantılı azaltılır
  */
 
 #include "stm32f4xx_hal.h"
 #include <string.h>
-#include <stdbool.h>
 
 #include "motor_config.h"
 #include "board_io.h"
@@ -33,48 +33,39 @@
 #include "cli.h"
 
 /* ====================================================================
- * Shared state (ISR <-> main loop)
+ * ISR ve ana döngü arasında paylaşılan volatile durum
+ * RunMode bldc_commutation.h'de tanımlı (tek kaynak)
  * ==================================================================== */
-
-typedef enum {
-    RUN_STOPPED = 0,
-    RUN_FORWARD = 1,
-    RUN_BACKWARD = 2
-} RunMode;
 
 volatile RunMode   g_runMode     = RUN_STOPPED;
 volatile uint16_t  g_commandDuty = DUTY_DEFAULT;
 volatile uint16_t  g_appliedDuty = 0;
 volatile uint32_t  g_isrTickCount = 0;
 
-/* Duty to PWM conversion: scale 0..255 command to 0..PWM_PERIOD_COUNTS */
-static inline uint16_t dutyToPwm(uint16_t duty) {
-    return (uint16_t)((uint32_t)duty * PWM_PERIOD_COUNTS / 255);
-}
 
 /* ====================================================================
- * MotorControl_Tick() — Called from TIM3 ISR at 12.5 kHz
+ * MotorControl_Tick() — TIM3 ISR'dan 12.5 kHz'de çağrılır
  *
- * This is the ENTIRE motor control hot path.
- * Keep it short, deterministic, no blocking, no prints.
+ * Motor kontrol hot path'in tamamı burada.
+ * Kısa, deterministik, blocking yok, print yok.
  * ==================================================================== */
 
 void MotorControl_Tick(void) {
     g_isrTickCount++;
 
-    /* 1) Sample ADC (decimated inside) */
+    /* 1) ADC örnekleme (içeride decimation ile) */
     Prot_SampleTick();
 
-    /* 2) Hard overcurrent check */
+    /* 2) Hard overcurrent kontrolü */
     if (Prot_CheckHardLimit()) {
-        /* Fault was latched — outputs already off */
-        g_runMode = RUN_STOPPED;
+        /* Fault latched oldu — çıkışlar zaten kapalı (Prot_LatchFault içinde) */
+        g_runMode    = RUN_STOPPED;
         g_appliedDuty = 0;
         return;
     }
 
-    /* 3) Check for stopped/faulted/zero-duty conditions */
-    RunMode mode = (RunMode)g_runMode;
+    /* 3) Durdurulmuş / fault / sıfır duty durumu */
+    RunMode  mode    = (RunMode)g_runMode;
     uint16_t cmdDuty = g_commandDuty;
 
     if (mode == RUN_STOPPED || Prot_IsFaulted() || cmdDuty == 0) {
@@ -83,43 +74,33 @@ void MotorControl_Tick(void) {
         return;
     }
 
-    /* 4) Resolve hall to commutation state */
-    uint32_t nowUsFine = (g_isrTickCount * 80);  /* 80 us per tick at 12.5 kHz */
-    uint8_t baseState = Hall_ResolveState(nowUsFine);
+    /* 4) Hall → komütasyon durumuna çözümleme */
+    uint32_t nowUs    = g_isrTickCount * 80U;  /* 80 µs/tick @ 12.5 kHz */
+    uint8_t  baseState = Hall_ResolveState(nowUs);
     if (baseState > 5) {
-        /* Invalid hall — outputs off */
+        /* Geçersiz hall — güvenli çıkış */
         g_appliedDuty = 0;
         Comm_AllOff();
         return;
     }
 
-    /* 5) Soft current limit */
+    /* 5) Yumuşak akım limiti uygulaması */
     uint16_t targetDuty = Prot_ApplySoftLimit(cmdDuty);
 
-    /* Apply minimum duty floor */
+    /* Minimum duty tabanı — çok küçük duty'de salınım olmasın */
     if (targetDuty > 0 && targetDuty < DUTY_MIN_ACTIVE) {
         targetDuty = DUTY_MIN_ACTIVE;
     }
 
-    /* 6) Slew limit */
+    /* 6) Duty slew (rampa) limiti */
     g_appliedDuty = Prot_SlewDuty(g_appliedDuty, targetDuty);
 
-    /* 7) Resolve drive state (direction) */
-    uint8_t driveState;
-    if (mode == RUN_FORWARD) {
-        driveState = baseState;
-    } else {
-        /* BACKWARD: opposite voltage vector */
-        int16_t bs = (int16_t)baseState + 3;
-        driveState = (uint8_t)(bs % 6);
-    }
-
-    /* 8) Apply commutation */
-    uint8_t prevState = Comm_GetActiveState();
-    bool stateChanged = (driveState != prevState);
-    uint16_t pwmDuty = dutyToPwm(g_appliedDuty);
-
-    Comm_Apply(driveState, pwmDuty, stateChanged);
+    /* 7) Komütasyon adımını uygula
+     *    Yön bilgisi Comm_ApplyStep'e iletilir.
+     *    Geri yönde CCER tablosu yüksek/düşük tarafı ters çevirir.
+     */
+    uint16_t pwmDuty = DUTY_TO_PWM(g_appliedDuty);
+    Comm_ApplyStep(baseState, pwmDuty, mode);
 }
 
 /* ====================================================================
@@ -157,15 +138,15 @@ int main(void) {
     }
     Prot_CalibrateOffset();
 
-    /* Print banner via raw HAL */
+    /* Banner yazdır */
     {
         const char *banner =
             "\r\n"
             "========================================\r\n"
             " Earendil BLDC Motor Controller\r\n"
             " STM32F411 + L6388 + 6-NMOS\r\n"
-            " 6-step sensored trapezoidal\r\n"
-            " Control: 12.5 kHz timer ISR\r\n"
+            " Sensored 6-step synchronous comp. PWM\r\n"
+            " Kontrol: 12.5 kHz TIM3 ISR\r\n"
             " CLI: UART2 @ 115200 (PA2/PA3)\r\n"
             "========================================\r\n"
             "\r\n";
