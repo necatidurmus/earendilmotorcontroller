@@ -183,6 +183,7 @@ void Prot_ClearFault(void) {
     faultLatched = false;
     hardStrikes = 0;
     strncpy(faultReason, "none", sizeof(faultReason) - 1);
+    faultReason[sizeof(faultReason) - 1] = '\0';
 }
 
 bool Prot_IsFaulted(void) {

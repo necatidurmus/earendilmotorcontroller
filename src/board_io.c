@@ -131,7 +131,7 @@ void BoardIO_InitGPIO(void) {
     gpio.Pin   = HALL_A_PIN | HALL_B_PIN | HALL_C_PIN;
     gpio.Mode  = GPIO_MODE_INPUT;
     gpio.Pull  = GPIO_PULLUP;
-    gpio.Speed = GPIO_SPEED_FREQ_HIGH;
+    gpio.Speed = GPIO_SPEED_FREQ_LOW;
     HAL_GPIO_Init(HALL_A_PORT, &gpio); /* Üçü de GPIOB'de */
 }
 
@@ -302,10 +302,10 @@ void BoardIO_StartControlTimer(void) {
 /* ====================================================================
  * ADC1 Başlatma — ISENSE (PA0/IN0) ve VSENSE (PA4/IN4)
  *
- * ADC saati: PCLK2/4 = 100/4 = 25 MHz (maks 36 MHz sınırının altında)
+ * ADC saati: PCLK2/4 = 96/4 = 24 MHz (maks 36 MHz sınırının altında)
  * BoardIO_ReadADC ISR içinden decimation ile çağrılır (register-level EOC polling).
- * Her okuma ≈ (84+12)/25MHz = 3.84 us.
- * ADC_DECIMATION=4 → ortalama ~0.96 us/tick ISR yükü.
+ * Her okuma ≈ (84+12)/24MHz ≈ 4 us.
+ * ADC_DECIMATION=4 → ortalama ~0.5-1 us/tick ISR yükü.
  * ==================================================================== */
 
 void BoardIO_InitADC(void) {
@@ -373,7 +373,7 @@ uint16_t BoardIO_ReadADC(uint32_t channel) {
 
 void BoardIO_InitUART(void) {
     __HAL_RCC_USART2_CLK_ENABLE();
-    __HAL_RCC_GPIOA_CLK_ENABLE();
+    /* GPIOA clock already enabled in BoardIO_InitGPIO() */
 
     /* PA2 = USART2_TX, PA3 = USART2_RX — AF7 */
     GPIO_InitTypeDef gpio = {0};
