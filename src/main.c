@@ -7,7 +7,7 @@
  *   - TIM3 ISR 12.5 kHz'de MotorControl_Tick() çağırır
  *   - Ana döngü yalnızca CLI ve LED yanıp sönmeyi işler
  *   - Arduino bağımlılığı yok — saf STM32Cube HAL
- *   - Komütasyon: senkron komplementer PWM (TIM1 CHx + CHxN)
+ *   - Komütasyon: 6-adım CH/CHN tabanlı senkron iletim
  *
  * ISR ve ana döngü arasında paylaşılan volatile durum:
  *   - g_runMode: CLI tarafından yazılır, ISR tarafından okunur
@@ -152,7 +152,7 @@ int main(void) {
             "========================================\r\n"
             " Earendil BLDC Motor Controller\r\n"
             " STM32F411 + L6388 + 6-NMOS\r\n"
-            " Sensored 6-step synchronous comp. PWM\r\n"
+            " Sensored 6-step CH/CHN sync drive\r\n"
             " Kontrol: 12.5 kHz TIM3 ISR\r\n"
             " CLI: UART2 @ 115200 (PA2/PA3)\r\n"
             "========================================\r\n"

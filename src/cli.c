@@ -138,12 +138,27 @@ static const char* modeName(RunMode m) {
     }
 }
 
+static int cliRequireStoppedConfig(const char *cmdName) {
+    if (g_runMode != RUN_STOPPED || g_appliedDuty != 0) {
+        cliPrint("'");
+        cliPrint(cmdName);
+        cliPrintln("' only allowed in STOPPED mode (applied duty must be 0).");
+        return 0;
+    }
+    return 1;
+}
+
 static void cmdSetMode(RunMode mode) {
     if (mode != RUN_STOPPED && Prot_IsFaulted()) {
         cliPrintln("FAULT active. Use 'clear' first.");
         return;
     }
     g_runMode = mode;
+    if (mode == RUN_FORWARD) {
+        Hall_SetDirection(1);
+    } else if (mode == RUN_BACKWARD) {
+        Hall_SetDirection(0);
+    }
     if (mode == RUN_STOPPED) {
         g_appliedDuty = 0;
     }
@@ -223,8 +238,10 @@ static void cmdStatus(void) {
     if (hs.mapped <= 5) cliPrintUint(hs.mapped); else cliPrint("INV");
     cliPrint(" acc=");
     if (hs.accepted <= 5) cliPrintUint(hs.accepted); else cliPrint("INV");
-    cliPrint(" drv=");
+    cliPrint(" drvHall=");
     if (hs.driveState <= 5) cliPrintUint(hs.driveState); else cliPrint("OFF");
+    cliPrint(" drvAct=");
+    if (Comm_GetActiveState() <= 5) cliPrintUint(Comm_GetActiveState()); else cliPrint("OFF");
     cliPrintln("");
 
     /* Current snapshot */
@@ -270,8 +287,10 @@ static void cmdHall(void) {
     if (hs.mapped <= 5) cliPrintUint(hs.mapped); else cliPrint("INV");
     cliPrint(" acc=");
     if (hs.accepted <= 5) cliPrintUint(hs.accepted); else cliPrint("INV");
-    cliPrint(" drv=");
+    cliPrint(" drvHall=");
     if (hs.driveState <= 5) cliPrintUint(hs.driveState); else cliPrint("OFF");
+    cliPrint(" drvAct=");
+    if (Comm_GetActiveState() <= 5) cliPrintUint(Comm_GetActiveState()); else cliPrint("OFF");
     cliPrintln("");
 }
 
@@ -302,6 +321,7 @@ static void cmdCurrent(void) {
 }
 
 static void cmdHinv(const char *arg) {
+    if (!cliRequireStoppedConfig("hinv")) return;
     if (!arg) { cliPrintln("Usage: hinv <0|1>"); return; }
     long val = atol(arg);
     uint8_t mask = (val != 0) ? 0x07 : 0x00;
@@ -312,6 +332,7 @@ static void cmdHinv(const char *arg) {
 }
 
 static void cmdHmask(const char *arg) {
+    if (!cliRequireStoppedConfig("hmask")) return;
     if (!arg) { cliPrintln("Usage: hmask <0..7>"); return; }
     long val = atol(arg);
     if (val < 0 || val > 7) { cliPrintln("Range: 0..7"); return; }
@@ -322,6 +343,7 @@ static void cmdHmask(const char *arg) {
 }
 
 static void cmdOffset(const char *arg) {
+    if (!cliRequireStoppedConfig("offset")) return;
     if (!arg) { cliPrintln("Usage: offset <-5..5>"); return; }
     long val = atol(arg);
     if (val < -5 || val > 5) { cliPrintln("Range: -5..5"); return; }
@@ -332,6 +354,7 @@ static void cmdOffset(const char *arg) {
 }
 
 static void cmdMap(const char *arg) {
+    if (!cliRequireStoppedConfig("map")) return;
     if (!arg) { cliPrintln("Usage: map <0..3>"); return; }
     long val = atol(arg);
     if (val < 0 || val >= HALL_PROFILE_COUNT) {
@@ -345,6 +368,7 @@ static void cmdMap(const char *arg) {
 }
 
 static void cmdLimits(const char *softStr, const char *hardStr) {
+    if (!cliRequireStoppedConfig("limits")) return;
     if (!softStr || !hardStr) {
         cliPrintln("Usage: limits <soft> <hard>");
         return;
@@ -364,6 +388,7 @@ static void cmdLimits(const char *softStr, const char *hardStr) {
 }
 
 static void cmdGain(const char *arg) {
+    if (!cliRequireStoppedConfig("gain")) return;
     if (!arg) { cliPrintln("Usage: gain <1..1000>"); return; }
     long val = atol(arg);
     if (val < 1 || val > 1000) { cliPrintln("Range: 1..1000"); return; }
@@ -374,6 +399,7 @@ static void cmdGain(const char *arg) {
 }
 
 static void cmdZeroi(void) {
+    if (!cliRequireStoppedConfig("zeroi")) return;
     cliPrintln("Calibrating ISENSE offset...");
     Prot_CalibrateOffset();
     ProtectionSnapshot ps;
@@ -384,11 +410,26 @@ static void cmdZeroi(void) {
 }
 
 static void cmdClear(void) {
+    if (!Prot_IsFaulted()) {
+        cliPrintln("No active fault.");
+        return;
+    }
+    if (g_runMode != RUN_STOPPED || g_appliedDuty != 0) {
+        cliPrintln("Stop motor first before clear.");
+        return;
+    }
+    if (g_commandDuty != 0) {
+        cliPrintln("Set pwm 0 before clear.");
+        return;
+    }
     Prot_ClearFault();
-    cliPrintln("Fault cleared");
+    g_commandDuty = 0;
+    BoardIO_RearmPWMOutputs();
+    cliPrintln("Fault cleared. Re-arm with pwm + mode command.");
 }
 
 static void cmdUv(const char *limStr, const char *hystStr, const char *strikesStr) {
+    if (!cliRequireStoppedConfig("uv")) return;
     if (!limStr || !hystStr || !strikesStr) {
         cliPrintln("Usage: uv <limit_mV> <hyst_mV> <strikes>");
         return;
@@ -428,6 +469,7 @@ static void cmdUv(const char *limStr, const char *hystStr, const char *strikesSt
 }
 
 static void cmdUven(const char *arg) {
+    if (!cliRequireStoppedConfig("uven")) return;
     if (!arg) {
         cliPrintln("Usage: uven <0|1>");
         return;
@@ -470,6 +512,8 @@ static void cmdHelp(void) {
     cliPrintln("  gain <1..1000>  INA gain for estA");
     cliPrintln("  zeroi           recalibrate offset");
     cliPrintln("  clear           clear fault");
+    cliPrintln("  note: config cmds only in STOPPED");
+    cliPrintln("  note: clear needs STOPPED + pwm 0");
     cliPrintln("  help|?          this help");
     cliPrintln("");
 }

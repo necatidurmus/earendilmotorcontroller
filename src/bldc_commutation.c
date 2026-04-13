@@ -9,9 +9,9 @@
  *   - Deadtime: yazılımda, bir ISR periyodu all-off bekleme
  *   - Sorun: shoot-through riski, verimsiz geri dönüş akımı yönetimi
  *
- * YENİ YAPI (senkron komplementer):
+ * YENİ YAPI (6-step senkron iletim, CH/CHN tabanlı):
  *   - Yüksek taraf: TIM1_CH1/CH2/CH3 → PWM sinyali
- *   - Düşük taraf: TIM1_CH1N/CH2N/CH3N → komplementer PWM (otomatik ters)
+ *   - Karşı faz düşük taraf: TIM1_CH1N/CH2N/CH3N → senkron iletim
  *   - Deadtime: donanım (BDTR.DTG = 50 → 500 ns)
  *   - CCER ile hangi çiftin aktif olduğu kontrol edilir
  *   - Pasif fazda CHx ve CHxN her ikisi devre dışı → güvenli idle
@@ -34,6 +34,7 @@
  */
 
 #include "bldc_commutation.h"
+#include "board_io.h"
 #include "motor_config.h"
 #include "stm32f4xx.h"
 
@@ -99,12 +100,14 @@ static CCR_Ptr const CCR_BWD_PTR[6] = {
 
 static uint8_t  activeState = 0xFF;
 static uint16_t activeDuty  = 0;
+static RunMode  activeDir   = RUN_STOPPED;
 
 /* ====================================================================
  * API
  * ==================================================================== */
 
 void Comm_Init(void) {
+    activeDir = RUN_STOPPED;
     Comm_AllOff();
 }
 
@@ -112,43 +115,53 @@ void Comm_Init(void) {
  * Comm_ApplyStep — ISR hot path
  *
  * İşlem sırası:
- *   1. Tüm CCR'ları sıfırla (önceki adımın duty kalıntısını temizle)
- *   2. Aktif yüksek tarafa duty yaz
- *   3. CCER'ı güncelle
+ *   1. Gerekirse MOE'yi tekrar aç (clear/re-arm sonrası)
+ *   2. Sektör/yön değişiminde CCR temizle + CCER güncelle
+ *   3. Aktif yüksek tarafa duty yaz
  *
  * Donanım deadtime CCER geçişini korur — her CCR/CCER sırası güvenli.
  * Atomik değil ama deadtime (500ns) tüm glitch'leri maskeler.
  */
 void Comm_ApplyStep(uint8_t state, uint16_t duty, RunMode dir) {
-    if (state > 5) {
+    if (state > 5 || duty == 0U || dir == RUN_STOPPED) {
         Comm_AllOff();
         return;
     }
 
-    /* Önceki adımın duty kalıntılarını temizle */
-    TIM1->CCR1 = 0;
-    TIM1->CCR2 = 0;
-    TIM1->CCR3 = 0;
-
+    CCR_Ptr activeCcr;
+    uint32_t ccerValue;
     if (dir == RUN_FORWARD) {
-        *CCR_FWD_PTR[state] = duty;
-        TIM1->CCER = (TIM1->CCER & ~CCER_COMM_MASK) | CCER_FWD[state];
+        activeCcr = CCR_FWD_PTR[state];
+        ccerValue = CCER_FWD[state];
     } else {
-        *CCR_BWD_PTR[state] = duty;
-        TIM1->CCER = (TIM1->CCER & ~CCER_COMM_MASK) | CCER_BWD[state];
+        activeCcr = CCR_BWD_PTR[state];
+        ccerValue = CCER_BWD[state];
     }
+
+    if ((TIM1->BDTR & TIM_BDTR_MOE) == 0U) {
+        BoardIO_RearmPWMOutputs();
+    }
+
+    if (state != activeState || dir != activeDir) {
+        /* Sadece sektör/yön değişiminde bridge enable haritasını güncelle */
+        TIM1->CCR1 = 0;
+        TIM1->CCR2 = 0;
+        TIM1->CCR3 = 0;
+        TIM1->CCER = (TIM1->CCER & ~CCER_COMM_MASK) | ccerValue;
+    }
+
+    *activeCcr = duty;
 
     activeState = state;
     activeDuty  = duty;
+    activeDir   = dir;
 }
 
 void Comm_AllOff(void) {
-    TIM1->CCR1 = 0;
-    TIM1->CCR2 = 0;
-    TIM1->CCR3 = 0;
-    TIM1->CCER = 0;
+    BoardIO_AllOff();
     activeState = 0xFF;
     activeDuty  = 0;
+    activeDir   = RUN_STOPPED;
 }
 
 uint8_t  Comm_GetActiveState(void) { return activeState; }

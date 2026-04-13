@@ -5,7 +5,7 @@
  * için tüm donanım bağımlı sabitler, ayar parametreleri ve tasarım varsayımları.
  *
  * Bölümler:
- *   0. CLI Transport seçimi  ← BU BÖLÜMÜ DEĞİŞTİR
+ *   0. CLI Transport
  *   1. Kart pin haritası (çalışan firmware'den doğrulanmış)
  *   2. Timer ve PWM ayarları
  *   3. Hall sensör işleme
@@ -101,6 +101,10 @@
  *   DEADTIME_COUNTS = 50 -> ~521 ns yazılımdan deadtime
  *   L6388 ayrıca ~300-400 ns dahili deadtime ekler
  *   Toplam efektif = ~820-920 ns — bench'te osiloskopla doğrulan
+ *
+ * TIM1 Break (BKIN):
+ *   Donanımsal hızlı kapatma için TIM1 break girişi opsiyonel.
+ *   TIM1_BREAK_ENABLE=1 yapılırsa BKIN aktif edilir.
  */
 
 /* PWM konfigürasyonu */
@@ -118,6 +122,13 @@
  * [AYAR] — güvenli başlangıç. Osiloskopla doğrula.
  */
 #define DEADTIME_COUNTS     50U
+
+/* TIM1 Break/BKIN (opsiyonel güvenlik) */
+#define TIM1_BREAK_ENABLE        0U
+#define TIM1_BREAK_PORT          GPIOB
+#define TIM1_BREAK_PIN           GPIO_PIN_12
+#define TIM1_BREAK_AF            GPIO_AF1_TIM1
+#define TIM1_BREAK_ACTIVE_HIGH   1U
 
 /*
  * PWM frekansı (SYSCLK=96 MHz):
