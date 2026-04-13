@@ -64,4 +64,4 @@
 - `CLI_TRANSPORT_UART` (varsayılan): USART2 PA2/PA3, 115200 baud
 - `CLI_TRANSPORT_CDC`: USB CDC, PA11/PA12 üzerinden sanal seri port
 
-CDC seçildiğinde SYSCLK 100→96 MHz düşer (USB 48 MHz PLLQ gereksinimi). Tüm timer hesapları bu saate göre yapılır.
+CDC seçildiğinde de SYSCLK 96 MHz'dir (USB 48 MHz PLLQ gereksinimi). Tüm timer hesapları bu saate göre yapılır.

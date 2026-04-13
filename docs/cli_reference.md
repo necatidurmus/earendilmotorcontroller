@@ -40,7 +40,7 @@ pwm 50
 ```
 
 - `0`: motor dönmez (stop gibi davranır ama mod değişmez)
-- `255`: maksimum duty (`PWM_PERIOD_COUNTS = 3332` → ~100%)
+- `255`: maksimum duty (`PWM_PERIOD_COUNTS = 3199` → ~100%)
 - Gerçek uygulanan duty soft limit ve slew'den geçer: `g_appliedDuty` farklı olabilir
 - `status` komutuyla `Duty cmd=` ve `applied=` karşılaştırılabilir
 

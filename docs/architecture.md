@@ -46,7 +46,7 @@ TIM3_IRQHandler() [80 µs dönem]
   │
   ├─ Prot_SampleTick()
   │    ├─ decimator++ (her 4. tick'te ADC)
-  │    ├─ BoardIO_ReadADC(ISENSE) — ~3.84 µs blocking
+  │    ├─ BoardIO_ReadADC(ISENSE) — ~4 µs blocking (EOC timeout ~10 µs)
   │    ├─ BoardIO_ReadADC(VSENSE)
   │    └─ EMA filtre → currentDelta güncelle
   │
@@ -70,8 +70,8 @@ TIM3_IRQHandler() [80 µs dönem]
   │
   └─ Comm_ApplyStep(state, pwmDuty, mode)
        ├─ TIM1->CCR1 = TIM1->CCR2 = TIM1->CCR3 = 0
-       ├─ *CCR_FWD_PTR[state] = pwmDuty
-       └─ TIM1->CCER = CCER_FWD[state]
+       ├─ *CCR_xxx_PTR[state] = pwmDuty
+       └─ TIM1->CCER = (TIM1->CCER & ~CCER_COMM_MASK) | CCER_xxx[state]
 ```
 
 ## Bellek Haritası (yaklaşık)

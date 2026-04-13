@@ -116,7 +116,7 @@ Dışarıya açılan fonksiyonlar:
 - `currentOffset`: kalibrasyon ofset değeri
 - `currentDelta`: filtered - offset (koruma kararları bu değere göre)
 - `voltageRaw`: VSENSE ham ADC
-- `estimatedAmps`: tahmini amper (INA181 kazancı bilinmiyorsa güvenilmez)
+- `estimatedAmps`: tahmini amper (INA181A1, gain=20 V/V — `gain` komutuyla ayarlanabilir)
 - `softLimitActive`: soft limit aktif mi
 - `hardStrikes`: ardışık hard limit aşım sayısı
 

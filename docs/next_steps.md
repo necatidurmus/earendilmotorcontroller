@@ -1,33 +1,29 @@
 # Sonraki Adımlar
 
-## Hemen Yapılacak (Milestone: Clock Sync + Safety)
+## Phase 1: Ölçüm Gerektiren — Konfigürasyon Kalibrasyonu
 
-1. **`docs/architecture.md` clock düzeltmesi** — 100 MHz → 96 MHz
-2. **`docs/config_reference.md` değer güncelleme** — PWM_PERIOD_COUNTS, prescaler
-3. **`docs/control_strategy.md` deadtime düzeltmesi** — 500 ns → 521 ns
-4. **`cli.h` USART1 → USART2 yorum düzeltmesi**
-5. **HardFault handler'da output kapatma**
-6. **`docs/modules.md` — usbd_conf.c/h ekleme**
+Ölçüm yapıldıktan sonra `motor_config.h` sabitleri güncellenecek.
 
-## Kısa Vadede (Milestone: Protection Completion)
+1. **Hall ve komütasyon doğrulama** — düşük duty'de motor döndür, hall raw/corrected/mapped izle, doğru profili bul
+2. **Akım kalibrasyonu** — `zeroi`, no-load dlt, stall dlt, soft/hard limit belirle
+3. **Duty ve ramp kalibrasyonu** — DUTY_MIN_ACTIVE, max safe duty, ramp step limitleri
+4. **Analog ölçekleme** — INA181 gain doğrula, VSENSE multimetre ile karşılaştır
+5. **Deadtime doğrulama** — osiloskopla PA8/PA7 cross-conduction kontrolü
 
-7. **VSENSE ölçeğini bench'te doğrula** → undervoltage koruması ekle
-8. **DMA ADC'ye geçiş değerlendirmesi** — blocking ADC → ISR jitter azaltma
-9. **TIM1 Break girişi** — donanım OCP sinyali gelirse BDTR.BreakState aktif et
+## Phase 2: Ölçüm Sonrası Mimari Kararlar
 
-## Orta Vadede (Milestone: Feature Complete)
+6. **ADC DMA'ye geçiş değerlendirmesi** — ISR blocking ADC jitter riski
+7. **USB CDC'ye geçiş** — UART bring-up tamamlanınca
+8. **TIM1 Break girişi** — donanım OCP hattı netleşince
 
-10. **Throttle input** — hardware mevcut, ADC kanalını belirle, uygula
-11. **RPM feedback** — hall geçiş süresi → hız tahmini
-12. **Closed-loop PI** — hedef RPM veya duty için kapalı çevrim kontrol
-13. **NTC termal koruma** — analog giriş ekle
+## Phase 3: Güvenlik ve Feature Eksiklikleri
 
-## Uzun Vadede (Milestone: Production Ready)
-
-14. **Watchdog timer** — IWDG ile sistem sağlığı kontrolü
-15. **Configuration flash** — ayarları NVM'de sakla
-16. **USB CDC full test** — UARTsız çalışma modu doğrulaması
-17. **EMC / EMI test** — osiloskopla switching noise analizi
+9. **IWDG watchdog timer** — ISR/main loop takılmasına karşı koruma
+10. **Undervoltage koruması** — VSENSE doğrulanınca eklenecek
+11. **Termal koruma (NTC)** — NTC donanımı eklenince
+12. **Throttle input** — hardware mevcut, ADC kanalını belirle
+13. **RPM feedback** — hall geçiş süresi → hız tahmini
+14. **Closed-loop PI** — hedef RPM için kapalı çevrim kontrol
 
 ## Notlar
 - Her milestone sonrası `project_status.md` güncelle
