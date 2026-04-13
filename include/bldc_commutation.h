@@ -2,15 +2,14 @@
  * bldc_commutation.h — Sensörlü 6-adım senkron komplementer PWM komütasyonu
  *
  * Mimari:
- *   - Her komütasyon adımında yalnızca 2 faz aktif (6 olası adım)
- *   - Aktif yüksek taraf: TIM1_CHx → PWM sinyali (duty döngüsü ile)
- *   - Aktif düşük taraf:  TIM1_CHxN → komplementer PWM (donanım deadtime ile)
+ *   - Her komütasyon adımında source + sink olmak üzere 2 faz aktif (6 adım)
+ *   - Aktif bacakta CHx + CHxN birlikte aktif (OCxE + OCxNE)
+ *   - Source fazda CCR=duty, sink fazda CCR=0, üçüncü faz devre dışı
  *   - Pasif fazlar: CCER'da devre dışı → idle state=0 → L6388 INH=INL=0
  *
  * Senkron komplementer:
- *   Yüksek taraf PWM + düşük taraf ters PWM (CHN).
+ *   Aynı kanalın CHx/CHxN çifti timer tarafından komplementer sürülür.
  *   Donanım deadtime (BDTR.DTG) shoot-through'yu önler.
- *   Her geçişte yazılım müdahalesi gerekmez.
  *
  * Her adım için switch durumları (ileri yön, durum 0..5):
  *

@@ -1,5 +1,5 @@
 /*
- * bldc_commutation.c — Sensörlü 6-adım senkron komplementer PWM komütasyonu
+ * bldc_commutation.c — Sensörlü 6-adım aktif faz çifti sürüş komütasyonu
  *
  * Bu dosya asenkron yapıdan tamamen yeniden yazıldı.
  *
@@ -9,12 +9,12 @@
  *   - Deadtime: yazılımda, bir ISR periyodu all-off bekleme
  *   - Sorun: shoot-through riski, verimsiz geri dönüş akımı yönetimi
  *
- * YENİ YAPI (6-step senkron iletim, CH/CHN tabanlı):
- *   - Yüksek taraf: TIM1_CH1/CH2/CH3 → PWM sinyali
- *   - Karşı faz düşük taraf: TIM1_CH1N/CH2N/CH3N → senkron iletim
- *   - Deadtime: donanım (BDTR.DTG = 50 → 500 ns)
- *   - CCER ile hangi çiftin aktif olduğu kontrol edilir
- *   - Pasif fazda CHx ve CHxN her ikisi devre dışı → güvenli idle
+ * YENİ YAPI (gerçek senkron komplementer):
+ *   - Aktif bacakta CHx ve CHxN birlikte açılır (OCxE + OCxNE)
+ *   - Kaynak faz: CCR=duty  -> high-side PWM + low-side komplementer
+ *   - Sink faz:   CCR=0     -> high-side kapalı, low-side açık
+ *   - Float faz:  CHx/CHxN devre dışı
+ *   - Deadtime: donanım (BDTR.DTG)
  *
  * CCER Register Bit Haritası (TIM1):
  *   Bit  0: CC1E  — CH1  enable  (PA8  yüksek taraf A)
@@ -24,13 +24,13 @@
  *   Bit  8: CC3E  — CH3  enable  (PA10 yüksek taraf C)
  *   Bit 10: CC3NE — CH3N enable  (PB1  düşük taraf C)
  *
- * Her adım için switch durumları (ileri yön):
- *   Adım 0: A↑ B↓ → CH1E | CH2NE
- *   Adım 1: A↑ C↓ → CH1E | CH3NE
- *   Adım 2: B↑ C↓ → CH2E | CH3NE
- *   Adım 3: B↑ A↓ → CH2E | CH1NE
- *   Adım 4: C↑ A↓ → CH3E | CH1NE
- *   Adım 5: C↑ B↓ → CH3E | CH2NE
+ * Her adım için faz rolleri (ileri yön):
+ *   Adım 0: Source=A, Sink=B, Float=C
+ *   Adım 1: Source=A, Sink=C, Float=B
+ *   Adım 2: Source=B, Sink=C, Float=A
+ *   Adım 3: Source=B, Sink=A, Float=C
+ *   Adım 4: Source=C, Sink=A, Float=B
+ *   Adım 5: Source=C, Sink=B, Float=A
  */
 
 #include "bldc_commutation.h"
@@ -52,47 +52,55 @@
 /* Mask of all commutation channel bits — safe read-modify-write */
 #define CCER_COMM_MASK (CCER_CH1E | CCER_CH1NE | CCER_CH2E | CCER_CH2NE | CCER_CH3E | CCER_CH3NE)
 
-/*
- * Her komütasyon adımı için precomputed CCER değerleri.
- * ISR içinde lookup tablosu olarak kullanılır — dal yok, hesaplama yok.
- */
-static const uint32_t CCER_FWD[6] = {
-    CCER_CH1E | CCER_CH2NE,  /* Adım 0: A yük. B düş. */
-    CCER_CH1E | CCER_CH3NE,  /* Adım 1: A yük. C düş. */
-    CCER_CH2E | CCER_CH3NE,  /* Adım 2: B yük. C düş. */
-    CCER_CH2E | CCER_CH1NE,  /* Adım 3: B yük. A düş. */
-    CCER_CH3E | CCER_CH1NE,  /* Adım 4: C yük. A düş. */
-    CCER_CH3E | CCER_CH2NE,  /* Adım 5: C yük. B düş. */
-};
+typedef enum {
+    PHASE_A = 0,
+    PHASE_B = 1,
+    PHASE_C = 2
+} PhaseId;
 
-/* Geri yön: yüksek ve düşük taraf yer değiştirir */
-static const uint32_t CCER_BWD[6] = {
-    CCER_CH2E | CCER_CH1NE,  /* Adım 0 geri: B yük. A düş. */
-    CCER_CH3E | CCER_CH1NE,  /* Adım 1 geri: C yük. A düş. */
-    CCER_CH3E | CCER_CH2NE,  /* Adım 2 geri: C yük. B düş. */
-    CCER_CH1E | CCER_CH2NE,  /* Adım 3 geri: A yük. B düş. */
-    CCER_CH1E | CCER_CH3NE,  /* Adım 4 geri: A yük. C düş. */
-    CCER_CH2E | CCER_CH3NE,  /* Adım 5 geri: B yük. C düş. */
-};
-
-/*
- * Her adım için hangi CCR'a duty yazılacağı.
- * Senkron komplementer'de yalnızca yüksek taraf CCR'ı duty belirler.
- * CHxN otomatik komplementer olarak düşük tarafı sürer.
- */
 typedef volatile uint32_t* CCR_Ptr;
 
-static CCR_Ptr const CCR_FWD_PTR[6] = {
-    &TIM1->CCR1, &TIM1->CCR1,
-    &TIM1->CCR2, &TIM1->CCR2,
-    &TIM1->CCR3, &TIM1->CCR3,
+static CCR_Ptr const CCR_PHASE_PTR[3] = {
+    &TIM1->CCR1,
+    &TIM1->CCR2,
+    &TIM1->CCR3,
 };
 
-static CCR_Ptr const CCR_BWD_PTR[6] = {
-    &TIM1->CCR2, &TIM1->CCR3,
-    &TIM1->CCR3, &TIM1->CCR1,
-    &TIM1->CCR1, &TIM1->CCR2,
+static const uint32_t CCER_PHASE_MASK[3] = {
+    CCER_CH1E | CCER_CH1NE,
+    CCER_CH2E | CCER_CH2NE,
+    CCER_CH3E | CCER_CH3NE,
 };
+
+/* İleri yön: source/sink faz eşleşmeleri */
+static const uint8_t SOURCE_FWD[6] = {
+    PHASE_A, PHASE_A, PHASE_B,
+    PHASE_B, PHASE_C, PHASE_C,
+};
+
+static const uint8_t SINK_FWD[6] = {
+    PHASE_B, PHASE_C, PHASE_C,
+    PHASE_A, PHASE_A, PHASE_B,
+};
+
+/* Geri yön: source/sink terslenir */
+static const uint8_t SOURCE_BWD[6] = {
+    PHASE_B, PHASE_C, PHASE_C,
+    PHASE_A, PHASE_A, PHASE_B,
+};
+
+static const uint8_t SINK_BWD[6] = {
+    PHASE_A, PHASE_A, PHASE_B,
+    PHASE_B, PHASE_C, PHASE_C,
+};
+
+static inline void setPhaseDuty(uint8_t phase, uint16_t duty) {
+    *CCR_PHASE_PTR[phase] = duty;
+}
+
+static inline uint32_t buildCcerMask(uint8_t sourcePhase, uint8_t sinkPhase) {
+    return CCER_PHASE_MASK[sourcePhase] | CCER_PHASE_MASK[sinkPhase];
+}
 
 /* ====================================================================
  * İç durum
@@ -117,7 +125,7 @@ void Comm_Init(void) {
  * İşlem sırası:
  *   1. Gerekirse MOE'yi tekrar aç (clear/re-arm sonrası)
  *   2. Sektör/yön değişiminde CCR temizle + CCER güncelle
- *   3. Aktif yüksek tarafa duty yaz
+ *   3. Source faza duty, sink faza 0 yaz
  *
  * Donanım deadtime CCER geçişini korur — her CCR/CCER sırası güvenli.
  * Atomik değil ama deadtime (500ns) tüm glitch'leri maskeler.
@@ -128,29 +136,39 @@ void Comm_ApplyStep(uint8_t state, uint16_t duty, RunMode dir) {
         return;
     }
 
-    CCR_Ptr activeCcr;
-    uint32_t ccerValue;
-    if (dir == RUN_FORWARD) {
-        activeCcr = CCR_FWD_PTR[state];
-        ccerValue = CCER_FWD[state];
-    } else {
-        activeCcr = CCR_BWD_PTR[state];
-        ccerValue = CCER_BWD[state];
+    if (duty > PWM_DUTY_MAX) {
+        duty = PWM_DUTY_MAX;
     }
+
+    uint8_t sourcePhase;
+    uint8_t sinkPhase;
+    if (dir == RUN_FORWARD) {
+        sourcePhase = SOURCE_FWD[state];
+        sinkPhase = SINK_FWD[state];
+    } else if (dir == RUN_BACKWARD) {
+        sourcePhase = SOURCE_BWD[state];
+        sinkPhase = SINK_BWD[state];
+    } else {
+        Comm_AllOff();
+        return;
+    }
+
+    uint32_t ccerValue = buildCcerMask(sourcePhase, sinkPhase);
 
     if ((TIM1->BDTR & TIM_BDTR_MOE) == 0U) {
         BoardIO_RearmPWMOutputs();
     }
 
     if (state != activeState || dir != activeDir) {
-        /* Sadece sektör/yön değişiminde bridge enable haritasını güncelle */
+        /* Sadece sektör/yön değişiminde bacak enable haritasını güncelle */
         TIM1->CCR1 = 0;
         TIM1->CCR2 = 0;
         TIM1->CCR3 = 0;
         TIM1->CCER = (TIM1->CCER & ~CCER_COMM_MASK) | ccerValue;
     }
 
-    *activeCcr = duty;
+    setPhaseDuty(sourcePhase, duty);
+    setPhaseDuty(sinkPhase, 0U);
 
     activeState = state;
     activeDuty  = duty;
