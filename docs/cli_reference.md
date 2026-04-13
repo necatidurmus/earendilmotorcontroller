@@ -109,10 +109,10 @@ I raw=2048 filt=2049 off=2041 dlt=8 estA=0.13 soft=off strikes=0 | V raw=1820
 | `filt` | EMA filtrelenmiş değer |
 | `off` | Kalibrasyon ofseti (`zeroi` ile ayarlanır) |
 | `dlt` | delta = filtered - offset (koruma bu değere bakar) |
-| `estA` | Tahmini amper — INA181 kazancı bilinmiyorsa güvenilmez |
+| `estA` | Tahmini amper — INA181A1 (gain=20 V/V) ile hesaplanır |
 | `soft` | Soft limit aktif mi (ACT / off) |
 | `strikes` | Ardışık hard limit aşım sayısı (0'dan 3'e ulaşınca fault) |
-| `V raw` | VSENSE ham ADC (voltaj bölücü oranı belirsiz) |
+| `V raw` | VSENSE ham ADC (bölücü oranı=0.04472, R_top=47k, R_bot=2.2k) |
 
 ---
 

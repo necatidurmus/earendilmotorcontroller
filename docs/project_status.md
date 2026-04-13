@@ -38,14 +38,14 @@
 1. **Clock doküman uyumsuzluğu**: architecture.md, config_reference.md, control_strategy.md hâlâ 100 MHz SYSCLK yazıyor. Kod 96 MHz.
 2. **HardFault handler**: Motor sürücülü sistemde outputs kapatılmadan `while(1)` — MOSFET açık kalabilir.
 3. **Blocking ADC**: ISR içinde blocking ADC okuma — jitter riski.
-4. **INA181 gain bilinmiyor**: Akım tahmini yaklaşık, koruma ADC delta üzerinde çalışıyor (doğru).
+4. **INA181 gain biliniyor**: INA181A1 (gain=20 V/V). Akım tahmini güvenilir, koruma ADC delta üzerinde çalışıyor (doğru).
 
 ## Donanım Belirsizlikleri
 | Konu | Durum |
 |---|---|
-| MOSFET part number | Bilinmiyor — Vds, Rds(on), Qg kontrol edilmeli |
-| INA181 suffix | Bilinmiyor — PCB markajı okunmalı |
-| VSENSE bölücü oranı | Teorik: R12=47k, R13=2.2k → 0.04472; bench'te doğrulanmalı |
+| MOSFET | IRFB7730 — Vds(max)=75V, Rds(on)=3.1mΩ, Qg=137nC [DOĞRULANDI] |
+| INA181 | A1 (INA181A1QDBVRQ1), gain=20 V/V [DOĞRULANDI] |
+| VSENSE bölücü oranı | Teorik: R_top=47k, R_bot=2.2k → 0.04472; bench'te doğrulanmalı |
 | Deadtime yeterliliği | ~820-920 ns teorik; osiloskopla doğrulanmalı |
 | Hall profili | Profil 0 varsayılan; motora göre ayarlanmalı |
 
