@@ -1,3 +1,5 @@
+
+
 # Konfigürasyon Referansı — `motor_config.h`
 
 Donanım değişikliği veya parametre ayarı için tek dokunma noktası. Her sabitin ne yaptığı, hangi hesaplamadan çıktığı ve nasıl ayarlanacağı aşağıda açıklanmıştır.
@@ -52,28 +54,28 @@ Donanım değişikliği veya parametre ayarı için tek dokunma noktası. Her sa
 ### PWM Frekansı Hesabı
 
 ```
-APB2 timer saati = 200 MHz (SYSCLK=100 MHz, APB2 bölücü=1, timer x2)
-TIM1 ön bölücü = 1 → TIM1 tick = 200/2 = 100 MHz
+APB2 timer saati = 96 MHz (SYSCLK=96 MHz, APB2 prescaler=1, timer x1)
+TIM1 ön bölücü = 0 → TIM1 tick = 96 MHz
 
-PWM_PERIOD_COUNTS = 3332
-PWM frekansı = 100 MHz / (3332 + 1) = 100 MHz / 3333 ≈ 30.0 kHz
+PWM_PERIOD_COUNTS = 3199
+PWM frekansı = 96 MHz / (3199 + 1) = 96 MHz / 3200 = 30.0 kHz
 
-Duty çözünürlüğü: 0..3332, yaklaşık 11.7 bit
+Duty çözünürlüğü: 0..3199, yaklaşık 11.6 bit
 ```
 
 **`PWM_PERIOD_COUNTS`** değiştirilerek PWM frekansı ayarlanabilir:
-- 20 kHz istiyorsanız: `100 MHz / 20000 - 1 = 4999`
-- 40 kHz istiyorsanız: `100 MHz / 40000 - 1 = 2499`
+- 20 kHz istiyorsanız: `96 MHz / 20000 - 1 = 4799`
+- 40 kHz istiyorsanız: `96 MHz / 40000 - 1 = 2399`
 
 ### Deadtime Hesabı
 
 ```
 DEADTIME_COUNTS = 50
-TIM1 tick süresi = 1 / 100 MHz = 10 ns
-MCU deadtime = 50 × 10 ns = 500 ns
+TIM1 tick süresi = 1 / 96 MHz ≈ 10.4 ns
+MCU deadtime = 50 × 10.4 ns ≈ 521 ns
 
 L6388 dahili propagasyon gecikmesi ≈ 300-400 ns
-Toplam ≈ 800-900 ns
+Toplam ≈ 820-920 ns
 
 [AYAR] Osiloskopla ölçüldükten sonra en küçük güvenli değere indirilebilir.
         MOSFET Qg ve gate direncine bağlı olarak değişir.
@@ -87,8 +89,8 @@ Deadtime nasıl ayarlanır:
 ### TIM3 Kontrol Zamanlayıcısı
 
 ```
-APB1 timer saati = 100 MHz (APB1=50 MHz, timer x2)
-CTRL_TIMER_PRESCALER = 99 → tick = 100 MHz / 100 = 1 MHz
+APB1 timer saati = 96 MHz (APB1=48 MHz, prescaler=2 → x2 = 96 MHz)
+CTRL_TIMER_PRESCALER = 95 → tick = 96 MHz / 96 = 1 MHz (1 µs)
 CTRL_TIMER_PERIOD = 79 → ISR = 1 MHz / 80 = 12.5 kHz (80 µs)
 ```
 
@@ -109,7 +111,7 @@ ISR frekansını değiştirmek için `CTRL_TIMER_PERIOD` ayarlanır:
 | `INVALID_HALL_HOLD_US` | `1500` | Geçersiz hall'da son geçerli durumu tut bu kadar |
 | `HALL_PROFILE_COUNT` | `4` | Farklı hall eşleştirme profili sayısı |
 
-**`HALL_OVERSAMPLE`** artırılırsa gürültü azalır ama ISR süresi uzar. 7 değer için 21 GPIO okuma = ~42 ns ek yük (100 MHz'de).
+**`HALL_OVERSAMPLE`** artırılırsa gürültü azalır ama ISR süresi uzar. 7 değer için 21 GPIO okuma ≈ ek yük.
 
 **`MIN_STATE_INTERVAL_US`** çok küçük yapılırsa gürültü kaynaklı sahte geçişler kabul edilir. Çok büyük yapılırsa yüksek hız çalışmada doğru geçişler reddedilir.
 
@@ -148,7 +150,7 @@ ISR frekansını değiştirmek için `CTRL_TIMER_PERIOD` ayarlanır:
 **`DUTY_TO_PWM(d)`** makrosu:
 ```c
 duty_pwm = d * PWM_PERIOD_COUNTS / 255
-// Örnek: d=50 → 50 × 3332 / 255 = 653 (PWM CCR değeri)
+// Örnek: d=50 → 50 × 3199 / 255 = 627 (PWM CCR değeri)
 ```
 
 **`DUTY_MIN_ACTIVE`**: Çok küçük duty'de MOSFET'ler tam açılıp kapanmadan önce deadtime süresi geçebilir. 8/255 ≈ %3.1 başlangıç için güvenli.

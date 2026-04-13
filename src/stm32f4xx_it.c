@@ -27,6 +27,11 @@ void NMI_Handler(void) {
 void HardFault_Handler(void) {
     /* Emergency: turn off all outputs, spin forever */
     __disable_irq();
+    /* Force TIM1 outputs off — CCER=0, CCR=0 */
+    TIM1->CCER = 0;
+    TIM1->CCR1 = 0;
+    TIM1->CCR2 = 0;
+    TIM1->CCR3 = 0;
     while (1) { }
 }
 

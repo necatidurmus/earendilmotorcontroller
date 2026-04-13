@@ -22,6 +22,10 @@
 #include "board_io.h"
 #include <string.h>
 
+#if CLI_TRANSPORT == CLI_TRANSPORT_CDC
+#include "usb_device.h"
+#endif
+
 /* ====================================================================
  * HAL handle tanımları — motor_config.h'de extern olarak bildirilmiş
  * ==================================================================== */
@@ -46,14 +50,22 @@ static void DWT_Init(void) {
 }
 
 /* ====================================================================
- * Sistem Saati — 25 MHz HSE'den 100 MHz
+ * Sistem Saati — 25 MHz HSE'den 96 MHz
  *
- * HSE=25MHz, PLL_M=25, PLL_N=200, PLL_P=2 → SYSCLK=100MHz
- * APB1 bölücü=2 → APB1=50MHz, timer saati=100MHz (x2)
- * APB2 bölücü=1 → APB2=100MHz, timer saati=200MHz (x2)
+ * Neden 96 MHz (100 değil)?
+ *   USB Full-Speed için VCO/PLLQ = 48 MHz kesinlikle gereklidir.
+ *   VCO = 192 MHz → PLLQ=4 → USB = 48 MHz ✓
+ *   SYSCLK = VCO/PLLP = 192/2 = 96 MHz
  *
- * TIM1 (APB2): 200MHz timer saati
- * TIM3 (APB1): 100MHz timer saati
+ *   PLLN=200 ile VCO=200 MHz → USB=50 MHz: USB ÇALIŞMAZ.
+ *   PLLN=192 ile VCO=192 MHz → USB=48 MHz: USB ÇALIŞIR.
+ *
+ * HSE=25MHz, M=25, N=192, P=2 → SYSCLK=96 MHz
+ * APB1 bölücü=2 → APB1=48 MHz, timer saati=96 MHz (x2)
+ * APB2 bölücü=1 → APB2=96 MHz, timer saati=96 MHz (prescaler=1, x1)
+ *
+ * TIM1 (APB2): 96 MHz (APB2 prescaler=1 → x1 çarpanı)
+ * TIM3 (APB1): 96 MHz (APB1 prescaler=2 → x2 çarpanı)
  * ==================================================================== */
 
 void BoardIO_InitClock(void) {
@@ -68,10 +80,10 @@ void BoardIO_InitClock(void) {
     RCC_OscInitStruct.HSEState       = RCC_HSE_ON;
     RCC_OscInitStruct.PLL.PLLState   = RCC_PLL_ON;
     RCC_OscInitStruct.PLL.PLLSource  = RCC_PLLSOURCE_HSE;
-    RCC_OscInitStruct.PLL.PLLM       = 25;
-    RCC_OscInitStruct.PLL.PLLN       = 200;
-    RCC_OscInitStruct.PLL.PLLP       = RCC_PLLP_DIV2;  /* VCO/2 = 100 MHz */
-    RCC_OscInitStruct.PLL.PLLQ       = 4;               /* USB = 200/4 = 50 MHz */
+    RCC_OscInitStruct.PLL.PLLM       = 25;   /* VCO giriş = 1 MHz */
+    RCC_OscInitStruct.PLL.PLLN       = 192;  /* VCO = 192 MHz */
+    RCC_OscInitStruct.PLL.PLLP       = RCC_PLLP_DIV2;  /* SYSCLK = 96 MHz */
+    RCC_OscInitStruct.PLL.PLLQ       = 4;    /* USB = 192/4 = 48 MHz ← kritik */
 
     if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) {
         /* Saat hatası — LED yanıp söndür, takılı kal */
@@ -81,10 +93,11 @@ void BoardIO_InitClock(void) {
     RCC_ClkInitStruct.ClockType      = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
                                      | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
     RCC_ClkInitStruct.SYSCLKSource   = RCC_SYSCLKSOURCE_PLLCLK;
-    RCC_ClkInitStruct.AHBCLKDivider  = RCC_SYSCLK_DIV1;   /* HCLK = 100 MHz */
-    RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;     /* APB1 = 50 MHz */
-    RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;     /* APB2 = 100 MHz */
+    RCC_ClkInitStruct.AHBCLKDivider  = RCC_SYSCLK_DIV1;   /* HCLK = 96 MHz */
+    RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;     /* APB1 = 48 MHz */
+    RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;     /* APB2 = 96 MHz */
 
+    /* 96 MHz → FLASH_LATENCY_3 yeterli (80-100 MHz arası) */
     if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_3) != HAL_OK) {
         while (1) { BoardIO_LEDToggle(); for (volatile int i = 0; i < 500000; i++); }
     }
@@ -134,15 +147,15 @@ void BoardIO_InitGPIO(void) {
  *   - OSSR=1: timer çalışırken çıkışlar idle state'i korur (güvenli)
  *   - MOE (Main Output Enable) aktif et
  *
- * APB2 timer saati = 200 MHz
- * Ön bölücü = 1 → 200/2 = 100 MHz tick (tdts = 10 ns)
- * Periyot = 3332 → 100 MHz / 3333 ≈ 30 kHz PWM
+ * APB2 timer saati = 96 MHz (APB2 prescaler=1 → x1, TIM clock = APB2)
+ * Ön bölücü = 0 (PSC=0 → sayım = 96 MHz, tdts ≈ 10.4 ns)
+ * Periyot = 3199 → 96 MHz / 3200 = 30 kHz PWM
  *
  * Deadtime hesabı:
  *   DTG[7:0] bit7=0: deadtime = DTG × tdts
- *   DEADTIME_COUNTS=50 → 50 × 10ns = 500 ns MCU tarafı deadtime
+ *   DEADTIME_COUNTS=50 → 50 × 10.4 ns ≈ 521 ns MCU tarafı deadtime
  *   L6388 ayrıca ~300-400 ns iç deadtime ekler
- *   Toplam efektif deadtime: ~800-900 ns (bench'te doğrula)
+ *   Toplam efektif deadtime: ~820-920 ns (bench'te doğrula)
  * ==================================================================== */
 
 void BoardIO_InitPWM(void) {
@@ -168,9 +181,9 @@ void BoardIO_InitPWM(void) {
 
     /* TIM1 zaman tabanı */
     htim1.Instance               = TIM1;
-    htim1.Init.Prescaler         = 1;                 /* 200 MHz / 2 = 100 MHz */
+    htim1.Init.Prescaler         = 0;                 /* PSC=0 → sayım=TIM1 clock=96 MHz */
     htim1.Init.CounterMode       = TIM_COUNTERMODE_UP;
-    htim1.Init.Period            = PWM_PERIOD_COUNTS; /* 100 MHz / 3333 ≈ 30 kHz */
+    htim1.Init.Period            = PWM_PERIOD_COUNTS; /* 96 MHz / 3200 = 30 kHz */
     htim1.Init.ClockDivision     = TIM_CLOCKDIVISION_DIV1;
     htim1.Init.RepetitionCounter = 0;
     htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
@@ -252,16 +265,16 @@ void BoardIO_InitPWM(void) {
 /* ====================================================================
  * TIM3 Kontrol Zamanlayıcısı — 12.5 kHz ISR
  *
- * APB1 timer saati = 100 MHz
- * Ön bölücü = 99 → 100 MHz / 100 = 1 MHz
- * Periyot = 79 → 1 MHz / 80 = 12.5 kHz
+ * APB1 timer saati = 96 MHz (APB1=48 MHz, prescaler≠1 → x2 = 96 MHz)
+ * Ön bölücü (PSC) = 95 → 96 MHz / 96 = 1 MHz tick
+ * Periyot (ARR) = 79 → 1 MHz / 80 = 12.5 kHz ISR
  * ==================================================================== */
 
 void BoardIO_InitControlTimer(void) {
     __HAL_RCC_TIM3_CLK_ENABLE();
 
     htim3.Instance               = TIM3;
-    htim3.Init.Prescaler         = CTRL_TIMER_PRESCALER;  /* 99 → 1 MHz */
+    htim3.Init.Prescaler         = CTRL_TIMER_PRESCALER;  /* 95 → 96 MHz/96 = 1 MHz */
     htim3.Init.CounterMode       = TIM_COUNTERMODE_UP;
     htim3.Init.Period            = CTRL_TIMER_PERIOD;     /* 79 → 12.5 kHz */
     htim3.Init.ClockDivision     = TIM_CLOCKDIVISION_DIV1;
@@ -442,6 +455,15 @@ void BoardIO_InitAll(void) {
     BoardIO_InitADC();
     BoardIO_InitPWM();        /* TIM1 komplementer + deadtime */
     BoardIO_InitControlTimer();
+
+#if CLI_TRANSPORT == CLI_TRANSPORT_UART
+    /* UART modda: USART2 PA2/PA3 başlat */
     BoardIO_InitUART();
+#else
+    /* CDC modda: USB device stack başlat */
+    MX_USB_DEVICE_Init();
+    /* UART başlatılmaz — PA2/PA3 serbest kalır */
+#endif
+
     BoardIO_AllOff();         /* Güvenli başlangıç durumu */
 }

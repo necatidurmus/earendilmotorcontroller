@@ -30,12 +30,12 @@ Avantajlar:
 ## Deadtime Hesabı
 
 ```
-TIM1 tick: 10 ns (100 MHz)
+TIM1 tick: 10.4 ns (96 MHz)
 DEADTIME_COUNTS = 50
-MCU deadtime = 50 × 10 ns = 500 ns
+MCU deadtime = 50 × 10.4 ns ≈ 521 ns
 
 L6388 dahili propagasyon gecikmesi: ~300-400 ns (datasheet)
-Toplam efektif deadtime ≈ 800-900 ns
+Toplam efektif deadtime ≈ 820-920 ns
 
 [AYAR]: Bootstrap kapasitör şarj/deşarj süresi göz önünde bulundurularak
         bench'te osiloskopla doğrulanmalı. Gerekirse DEADTIME_COUNTS artırılabilir.

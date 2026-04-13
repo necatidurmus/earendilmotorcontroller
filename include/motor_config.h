@@ -5,6 +5,7 @@
  * için tüm donanım bağımlı sabitler, ayar parametreleri ve tasarım varsayımları.
  *
  * Bölümler:
+ *   0. CLI Transport seçimi  ← BU BÖLÜMÜ DEĞİŞTİR
  *   1. Kart pin haritası (çalışan firmware'den doğrulanmış)
  *   2. Timer ve PWM ayarları
  *   3. Hall sensör işleme
@@ -26,6 +27,30 @@
 
 #include <stdint.h>
 #include "stm32f4xx_hal.h"
+
+/* ====================================================================
+ * 0. CLI Transport Seçimi
+ *
+ * CLI_TRANSPORT_UART : USART2 PA2(TX)/PA3(RX), 115200 baud
+ *                      Herhangi bir USB-UART köprü veya ST-Link VCP ile çalışır.
+ *                      PA9/PA10 TIM1 PWM ile çakışır, bu yüzden USART2 kullanılır.
+ *
+ * CLI_TRANSPORT_CDC  : USB Full-Speed CDC (PA11 D-, PA12 D+)
+ *                      PC'de sanal seri port olarak görünür. Driver gerekmez
+ *                      (Windows 10+, Linux, macOS).
+ *                      UART kablosu gerekmez — doğrudan USB ile bağlan.
+ *
+ *                      ÖNEMLİ: CDC seçildiğinde SYSCLK 100→96 MHz olur.
+ *                      USB için VCO/PLLQ = 48 MHz şartı var.
+ *                      PLLN: 200→192, PLLQ=4 → 192/4 = 48 MHz USB ✓
+ *                      Tüm timer hesapları bu saate göre güncellendi.
+ *
+ * Değiştirmek için sadece bu satırı düzenle:
+ * ==================================================================== */
+#define CLI_TRANSPORT_UART   0
+#define CLI_TRANSPORT_CDC    1
+
+#define CLI_TRANSPORT        CLI_TRANSPORT_UART   /* ← buraya CDC veya UART yaz */
 
 /* ====================================================================
  * 1. Board pin mapping — CONFIRMED from working Arduino firmware
@@ -98,23 +123,40 @@
 /* PWM konfigürasyonu */
 #define PWM_TIMER_HANDLE    htim1
 #define PWM_FREQ_HZ         30000U
-#define PWM_PERIOD_COUNTS   3332U       /* 100 MHz / 2 / 3333 = ~30 kHz */
-#define PWM_DUTY_MAX        3332U       /* tam açık = periyot */
 
 /*
  * Deadtime sayacı: TIM1 BDTR DTG alanına yazılır.
- * DTG[7:0] bit7=0 → deadtime = DTG × tdts (tdts = 1/100MHz = 10ns)
- * 50 → 500 ns MCU-tarafı deadtime
- * [AYAR] — güvenli başlangıç noktası. L6388 iç DT ile ~900 ns toplam.
+ * DTG[7:0] bit7=0 → deadtime = DTG × tdts
+ *
+ * SYSCLK=96 MHz ile TIM1 saati:
+ *   APB2 prescaler=1 → TIM1 clock = APB2 = 96 MHz → tdts = 10.4 ns
+ *   DEADTIME_COUNTS=50 → 50 × 10.4 ns ≈ 521 ns MCU-tarafı deadtime
+ *   L6388 iç DT ~300-400 ns → toplam ~820-920 ns
+ * [AYAR] — güvenli başlangıç. Osiloskopla doğrula.
  */
 #define DEADTIME_COUNTS     50U
 
+/*
+ * PWM frekansı (SYSCLK=96 MHz):
+ *   APB2 prescaler=1 → TIM1 clock = 96 MHz (x1)
+ *   PSC=0 → sayım frekansı = 96 MHz
+ *   ARR=3199 → PWM = 96 MHz / 3200 = 30 kHz ✓
+ */
+#define PWM_PERIOD_COUNTS   3199U       /* 96 MHz / 3200 = 30 kHz */
+#define PWM_DUTY_MAX        3199U       /* duty aralığı 0..3199 */
+
 /* Kontrol döngüsü timer — TIM3 */
-#define CTRL_TIMER_HANDLE   htim3
-#define CTRL_TIMER          TIM3
-#define CTRL_TIMER_PRESCALER 99U        /* 100 MHz / 100 = 1 MHz */
-#define CTRL_TIMER_PERIOD   79U         /* 1 MHz / 80 = 12.5 kHz */
-#define CTRL_TICK_HZ        12500U      /* [AYAR] kontrol ISR frekansı */
+#define CTRL_TIMER_HANDLE    htim3
+#define CTRL_TIMER           TIM3
+/*
+ * TIM3 (SYSCLK=96 MHz):
+ *   APB1 prescaler=2 → APB1=48 MHz → TIM3 clock = 48×2 = 96 MHz
+ *   PSC=95 → tick = 96/(95+1) = 1 MHz (1 µs)
+ *   ARR=79 → ISR = 1 MHz / 80 = 12.5 kHz ✓
+ */
+#define CTRL_TIMER_PRESCALER  95U       /* 96 MHz / 96 = 1 MHz */
+#define CTRL_TIMER_PERIOD     79U       /* 1 MHz / 80 = 12.5 kHz */
+#define CTRL_TICK_HZ          12500U
 
 /* ====================================================================
  * 3. Hall sensör işleme — [AYAR]
@@ -203,8 +245,17 @@
 #define CLI_LINE_BUF         96
 #define CLI_IDLE_PARSE_MS    120U       /* newline gelmezse otomatik parse */
 
-/* CLI USART2 PA2/PA3 kullanır (PA9/PA10 TIM1 PWM ile çakışır) */
-#define CLI_UART_HANDLE      huart2
+/*
+ * UART transport sabitleri (CLI_TRANSPORT == CLI_TRANSPORT_UART iken geçerli)
+ * CDC seçildiğinde bu değerler devre dışıdır.
+ */
+#define CLI_UART_HANDLE      huart2  /* USART2 — PA2(TX)/PA3(RX) */
+
+/*
+ * USB CDC transport sabitleri (CLI_TRANSPORT == CLI_TRANSPORT_CDC iken geçerli)
+ * CDC RX tampon boyutu: circular buffer, USB paket boyutunun katı olmalı
+ */
+#define USB_CDC_RX_BUF_SIZE  256U    /* circular RX tampon boyutu (2^n olsun) */
 
 /* ====================================================================
  * 9. Hall harita profilleri — [TASARIM] (çalışan firmware'den)
@@ -234,10 +285,16 @@ extern const uint8_t HALL_TO_STATE_PROFILES[HALL_PROFILE_COUNT][8];
 extern "C" {
 #endif
 
-extern TIM_HandleTypeDef htim1;     /* PWM timer */
-extern TIM_HandleTypeDef htim3;     /* control timer */
+extern TIM_HandleTypeDef  htim1;    /* PWM timer */
+extern TIM_HandleTypeDef  htim3;    /* control timer */
 extern ADC_HandleTypeDef  hadc1;    /* current/voltage sense */
-extern UART_HandleTypeDef huart2;   /* CLI serial — USART2 on PA2/PA3 */
+extern UART_HandleTypeDef huart2;   /* CLI UART — USART2 PA2/PA3 (sadece UART modda) */
+
+#if CLI_TRANSPORT == CLI_TRANSPORT_CDC
+/* USB CDC modda tanımlı — usb_device.c içinde */
+#include "stm32f4xx_hal_pcd.h"
+extern PCD_HandleTypeDef hpcd_USB_OTG_FS;
+#endif
 
 #ifdef __cplusplus
 }
