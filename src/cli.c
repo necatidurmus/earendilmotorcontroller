@@ -20,15 +20,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* ====================================================================
- * Motor run mode — shared with main.c
- * ==================================================================== */
-
-typedef enum {
-    RUN_STOPPED = 0,
-    RUN_FORWARD = 1,
-    RUN_BACKWARD = 2
-} RunMode;
+/*
+ * RunMode tipi bldc_commutation.h'de tanımlıdır (tek kaynak).
+ * main.c'deki volatile değişkenlere extern erişim.
+ */
 
 /* These are set/read by CLI and consumed by the ISR in main.c */
 extern volatile RunMode   g_runMode;
