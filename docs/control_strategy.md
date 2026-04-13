@@ -100,3 +100,25 @@ Aktif olmayan faz için CCER'da hem CHxE hem CHxNE = 0.
 Bu, pasif fazın float değil, her iki MOSFET'in kapalı olduğu anlamına gelir.
 Geri EMF body diodundan değil, devre açıktan (yüksek empedans) iletilir.
 Bu sensörlü komütasyon için doğru ve güvenli davranıştır.
+
+## State Geçiş Slew (All-Off Dead-Time)
+
+Hall sensör değişimi algılandığında, mevcut implementasyon bir tam ISR
+periyodu (~80 us) boyunca tüm çıkışları kapatır (CCR=0, CCER=0), sonra
+yeni komütasyon adımını uygular.
+
+```
+Hall değişim algılandı → Comm_AllOff() → 1 ISR tick bekleme → Yeni step
+```
+
+Bu yaklaşım **güvenli** ancak **kaba**dır:
+- Bir tam periyot boyunca motor enerjisiz kalır → tork ripple
+- 80 us boyunca body diod üzerinden akım akar → verim kaybı
+- Yüksek duty'de daha belirgin ses/titreşim
+
+Güvenlik avantajı: software-level shoot-through koruması sağlar
+(donanım deadtime'ın üzerine ek güvenlik katmanı).
+
+İleride rafine edilebilir: CCR'ları sıfırla ama CCER'ı hemen yeni adıma
+ayarla (donanım deadtime zaten shoot-through'yu önler), veya half-step
+geçişleri uygula.

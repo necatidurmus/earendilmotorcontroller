@@ -2,7 +2,7 @@
  * board_io.h — Kart seviyesi GPIO, PWM ve ADC başlatma
  *
  * STM32Cube HAL init çağrılarını şunlar için sarar:
- *   - Sistem saati (25 MHz HSE'den 100 MHz)
+ *   - Sistem saati (25 MHz HSE'den 96 MHz)
  *   - GPIO pinleri (hall girişleri, LED)
  *   - TIM1 komplementer PWM çıkışları:
  *       Yüksek taraf: PA8/PA9/PA10  → TIM1_CH1/CH2/CH3  (AF1)
@@ -46,7 +46,7 @@ void BoardIO_SetAllPWM(uint16_t a, uint16_t b, uint16_t c);
 /* Kısa yol: tüm çıkışlar kapalı (CCER sıfır + CCR sıfır) */
 void BoardIO_AllOff(void);
 
-/* ADC blocking okuma */
+/* ADC blocking okuma — register-level EOC polling, ISR-safe */
 uint16_t BoardIO_ReadADC(uint32_t channel);
 
 /* LED */

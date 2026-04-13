@@ -126,7 +126,7 @@ ISR frekansını değiştirmek için `CTRL_TIMER_PERIOD` ayarlanır:
 | `ADC_VREF` | `3.3f` | ADC referans voltajı |
 | `ADC_MAX_COUNTS` | `4095.0f` | 12-bit maksimum |
 | `SHUNT_OHMS` | `0.0005f` | Shunt direnci (0.5 mΩ) [TASARIM] |
-| `INA_GAIN_DEFAULT` | `50.0f` | INA181 başlangıç kazancı [BİLİNMİYOR] |
+| `INA_GAIN_DEFAULT` | `20.0f` | INA181A1QDBVRQ1 — A1 varyantı, 20 V/V gain [TASARIM] |
 | `ADC_DECIMATION` | `4` | Kaçıncı ISR tick'inde ADC örneklenir |
 | `CURRENT_FILTER_ALPHA` | `0.20f` | EMA düşük geçiren katsayı |
 | `ADC_CALIBRATION_SAMPLES` | `128` | `zeroi` kaç örnek alır |

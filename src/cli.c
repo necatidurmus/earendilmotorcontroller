@@ -19,6 +19,7 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 
 /*
  * RunMode tipi bldc_commutation.h'de tanımlıdır (tek kaynak).
@@ -44,8 +45,6 @@ static uint32_t lastRxTick = 0;
 /* ====================================================================
  * UART helpers
  * ==================================================================== */
-
-extern UART_HandleTypeDef huart2;  /* defined in board_io.c */
 
 static void cliPrint(const char *s) {
     HAL_UART_Transmit(&huart2, (uint8_t *)s, strlen(s), 100);
@@ -76,6 +75,10 @@ static void cliPrintUint(uint32_t val) {
 static void cliPrintInt(int32_t val) {
     if (val < 0) {
         cliPrint("-");
+        if (val == INT32_MIN) {
+            cliPrintUint((uint32_t)(-(val + 1)) + 1);
+            return;
+        }
         val = -val;
     }
     cliPrintUint((uint32_t)val);
@@ -96,7 +99,7 @@ static void cliPrintFloat(float val, int decimals) {
     int32_t fracInt = (int32_t)(frac + 0.5f);
     if (fracInt < 0) fracInt = 0;
     /* Print with leading zeros */
-    char buf[8];
+    char buf[16];
     int len = decimals;
     for (int i = len - 1; i >= 0; --i) {
         buf[i] = '0' + (fracInt % 10);
@@ -333,7 +336,7 @@ static void cmdLimits(const char *softStr, const char *hardStr) {
 }
 
 static void cmdGain(const char *arg) {
-    if (!arg) { cliPrintln("Usage: gain <20|50|100|200>"); return; }
+    if (!arg) { cliPrintln("Usage: gain <1..1000>"); return; }
     long val = atol(arg);
     if (val < 1 || val > 1000) { cliPrintln("Range: 1..1000"); return; }
     Prot_SetInaGain((float)val);
@@ -373,7 +376,7 @@ static void cmdHelp(void) {
     cliPrintln("  offset <-5..5>  state offset");
     cliPrintln("  map <0..3>      hall profile");
     cliPrintln("  limits s h      current limits");
-    cliPrintln("  gain <val>      INA gain for estA");
+    cliPrintln("  gain <1..1000>  INA gain for estA");
     cliPrintln("  zeroi           recalibrate offset");
     cliPrintln("  clear           clear fault");
     cliPrintln("  help|?          this help");

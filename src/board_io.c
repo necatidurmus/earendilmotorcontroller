@@ -131,7 +131,7 @@ void BoardIO_InitGPIO(void) {
     gpio.Pin   = HALL_A_PIN | HALL_B_PIN | HALL_C_PIN;
     gpio.Mode  = GPIO_MODE_INPUT;
     gpio.Pull  = GPIO_PULLUP;
-    gpio.Speed = GPIO_SPEED_FREQ_HIGH;
+    gpio.Speed = GPIO_SPEED_FREQ_LOW;
     HAL_GPIO_Init(HALL_A_PORT, &gpio); /* Üçü de GPIOB'de */
 }
 
@@ -260,6 +260,11 @@ void BoardIO_InitPWM(void) {
     TIM1->CCR2 = 0;
     TIM1->CCR3 = 0;
     TIM1->CCER = 0;
+
+    /* MOE (Main Output Enable) must be set for complementary outputs to work */
+    if (!(TIM1->BDTR & TIM_BDTR_MOE)) {
+        while (1);  /* MOE not set — configuration error */
+    }
 }
 
 /* ====================================================================
@@ -297,10 +302,10 @@ void BoardIO_StartControlTimer(void) {
 /* ====================================================================
  * ADC1 Başlatma — ISENSE (PA0/IN0) ve VSENSE (PA4/IN4)
  *
- * ADC saati: PCLK2/4 = 100/4 = 25 MHz (maks 36 MHz sınırının altında)
- * BlockingReadADC ISR içinden decimation ile çağrılır.
- * Her okuma ≈ (84+12)/25MHz = 3.84 us.
- * ADC_DECIMATION=4 → ortalama ~0.96 us/tick ISR yükü — kabul edilebilir.
+ * ADC saati: PCLK2/4 = 96/4 = 24 MHz (maks 36 MHz sınırının altında)
+ * BoardIO_ReadADC ISR içinden decimation ile çağrılır (register-level EOC polling).
+ * Her okuma ≈ (84+12)/24MHz ≈ 4 us.
+ * ADC_DECIMATION=4 → ortalama ~0.5-1 us/tick ISR yükü.
  * ==================================================================== */
 
 void BoardIO_InitADC(void) {
@@ -330,20 +335,33 @@ void BoardIO_InitADC(void) {
     ADC1_COMMON->CCR = ADC_CCR_ADCPRE_0;  /* 01 = /4 */
 }
 
-/* Blocking tek kanal ADC okuma */
+/* Blocking tek kanal ADC okuma — register-level EOC polling
+ * HAL_ADC_PollForConversion yerine doğrudan SR->EOC bayrağı okunur,
+ * böylece ISR içinde HAL timeout/mutex overhead'i ortadan kalkar.
+ * Kanal yeniden yapılandırma sadece değişirse yapılır. */
 uint16_t BoardIO_ReadADC(uint32_t channel) {
-    ADC_ChannelConfTypeDef cfg = {0};
-    cfg.Channel      = channel;
-    cfg.Rank         = 1;
-    cfg.SamplingTime = ADC_SAMPLETIME_84CYCLES; /* yeterli oturma süresi */
+    static uint32_t lastChannel = 0xFFFFFFFF;
 
-    HAL_ADC_ConfigChannel(&hadc1, &cfg);
-    HAL_ADC_Start(&hadc1);
-
-    if (HAL_ADC_PollForConversion(&hadc1, 2) == HAL_OK) {
-        return (uint16_t)HAL_ADC_GetValue(&hadc1);
+    if (channel != lastChannel) {
+        ADC_ChannelConfTypeDef cfg = {0};
+        cfg.Channel      = channel;
+        cfg.Rank         = 1;
+        cfg.SamplingTime = ADC_SAMPLETIME_84CYCLES;
+        HAL_ADC_ConfigChannel(&hadc1, &cfg);
+        lastChannel = channel;
     }
-    return 0;
+
+    hadc1.Instance->CR2 |= ADC_CR2_SWSTART;
+
+    /* EOC polling — ~96 döngü (3.84 us @ 25 MHz ADC clock), timeout at ~10 us */
+    {
+        uint32_t timeout = 1000;
+        while (!(hadc1.Instance->SR & ADC_SR_EOC)) {
+            if (--timeout == 0) return 0;  /* ADC stuck — return safe value */
+        }
+    }
+
+    return (uint16_t)hadc1.Instance->DR;
 }
 
 /* ====================================================================
@@ -355,7 +373,7 @@ uint16_t BoardIO_ReadADC(uint32_t channel) {
 
 void BoardIO_InitUART(void) {
     __HAL_RCC_USART2_CLK_ENABLE();
-    __HAL_RCC_GPIOA_CLK_ENABLE();
+    /* GPIOA clock already enabled in BoardIO_InitGPIO() */
 
     /* PA2 = USART2_TX, PA3 = USART2_RX — AF7 */
     GPIO_InitTypeDef gpio = {0};

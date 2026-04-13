@@ -41,12 +41,6 @@ typedef struct {
     uint8_t  hardStrikes;       /* current consecutive strike count */
 } ProtectionSnapshot;
 
-/* Fault state */
-typedef struct {
-    bool     latched;
-    char     reason[48];
-} FaultState;
-
 /* Initialize protection module */
 void Prot_Init(const ProtectionConfig *cfg);
 

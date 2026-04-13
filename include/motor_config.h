@@ -72,7 +72,7 @@
 #define CH_PORT             GPIOA
 #define CH_PIN              GPIO_PIN_10
 
-/* Low-side ON/OFF outputs — GPIO */
+/* Low-side complementary outputs — TIM1 CHxN (AF1) */
 #define AL_PORT             GPIOA
 #define AL_PIN              GPIO_PIN_7
 #define BL_PORT             GPIOB
@@ -99,25 +99,25 @@
 
 /*
  * STM32F411 saat ağacı (board_io.c'de yapılandırılmış):
- *   HSE = 25 MHz -> PLL -> SYSCLK = 100 MHz
- *   APB1 = 50 MHz, APB1 timer saati = 100 MHz (x2, çünkü APB1 bölücü != 1)
- *   APB2 = 100 MHz, APB2 timer saati = 200 MHz (x2, çünkü APB2 bölücü != 1)
+ *   HSE = 25 MHz -> PLL -> SYSCLK = 96 MHz
+ *   APB1 = 48 MHz, APB1 timer saati = 96 MHz (x2, çünkü APB1 bölücü != 1)
+ *   APB2 = 96 MHz, APB2 timer saati = 96 MHz (x1, çünkü APB2 prescaler=1)
  *
- * PWM timer: TIM1 (gelişmiş timer, APB2 timer saati = 200 MHz)
- *   Ön bölücü = 1  -> 200 MHz / 2 = 100 MHz tick
- *   Periyot = 3332  -> 100 MHz / 3333 = ~30 kHz PWM
- *   Çözünürlük: ~10 bit (0..3332 duty aralığı)
+ * PWM timer: TIM1 (gelişmiş timer, APB2 timer saati = 96 MHz)
+ *   Ön bölücü = 0  -> 96 MHz tick
+ *   Periyot = 3199  -> 96 MHz / 3200 = 30 kHz PWM
+ *   Çözünürlük: ~10 bit (0..3199 duty aralığı)
  *   Mod: Complementary (CH1/CH2/CH3 + CH1N/CH2N/CH3N)
  *
- * Kontrol timer: TIM3 (genel amaçlı, APB1 timer saati = 100 MHz)
- *   Ön bölücü = 99 -> 100 MHz / 100 = 1 MHz tick (1 us çözünürlük)
+ * Kontrol timer: TIM3 (genel amaçlı, APB1 timer saati = 96 MHz)
+ *   Ön bölücü = 95 -> 96 MHz / 96 = 1 MHz tick (1 us çözünürlük)
  *   Periyot = 79   -> 1 MHz / 80 = 12.5 kHz ISR
  *
  * TIM1 Deadtime:
- *   100 MHz tick, 1 tick = 10 ns
- *   DEADTIME_COUNTS = 50 -> 500 ns yazılımdan deadtime
+ *   96 MHz tick, 1 tick = ~10.4 ns
+ *   DEADTIME_COUNTS = 50 -> ~521 ns yazılımdan deadtime
  *   L6388 ayrıca ~300-400 ns dahili deadtime ekler
- *   Toplam efektif = ~800-900 ns — bench'te osiloskopla doğrulan
+ *   Toplam efektif = ~820-920 ns — bench'te osiloskopla doğrulan
  */
 
 /* PWM konfigürasyonu */
@@ -172,14 +172,14 @@
 
 /*
  * Akım ölçüm zinciri:
- *   I_motor -> R_shunt (0.5 mΩ) -> INA181 (kazanç bilinmiyor) -> PA0 ADC
+ *   I_motor -> R_shunt (0.5 mΩ) -> INA181A1QDBVRQ1 (gain=20 V/V) -> PA0 ADC
  *
  * ADC: 12-bit, Vref = 3.3 V
  *   LSB = 3.3 / 4095 = 0.806 mV
  *
  * Ekran dönüşümü ayarlanabilir kazanç üzerinden yapılır.
  * INA181 varyantları: A1=20, A2=50, A3=100, A4=200 V/V
- * [BİLİNMİYOR] — bench'te PCB üzerindeki suffix okunmalı.
+ * [TASARIM] INA181A1QDBVRQ1 — A1 varyantı, kazanç=20 V/V. Bench'te doğrulanmalı.
  *
  * UYARI: Koruma kararları daima ham ADC delta üzerinden verilir.
  * estimatedAmps sadece gösterimdedir, koruma için kullanılmamalıdır.
@@ -187,7 +187,7 @@
 #define ADC_VREF             3.3f
 #define ADC_MAX_COUNTS       4095.0f
 #define SHUNT_OHMS           0.0005f    /* [TASARIM] 0.5 mΩ, 2512 paket */
-#define INA_GAIN_DEFAULT     50.0f      /* [BİLİNMİYOR] varsayılan tahmin = A2 varyantı */
+#define INA_GAIN_DEFAULT     20.0f      /* INA181A1QDBVRQ1 — A1 varyantı, 20 V/V gain */
 
 /* ADC örnekleme: ISR yükünü azaltmak için seyreltilmiş */
 #define ADC_DECIMATION       4          /* her 4. ISR tick'inde örnekle = 3125 Hz */
@@ -195,7 +195,7 @@
 #define ADC_CALIBRATION_SAMPLES 128     /* ofset kalibrasyonu örnek sayısı */
 
 /* Voltaj ölçüm bölücü: devre şemasından [TASARIM] — bench'te doğrulanmalı */
-#define VSENSE_DIVIDER_RATIO 0.04472f   /* R12=47k, R13=2.2k -> 2.2/(47+2.2) */
+#define VSENSE_DIVIDER_RATIO 0.04472f   /* R_top=47k, R_bot=2.2k -> 2.2/(47+2.2) */
 #define VSENSE_VREF          3.3f
 
 /* ====================================================================
