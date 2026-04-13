@@ -201,7 +201,7 @@ static void cmdStatus(void) {
     cliPrint(" acc=");
     if (hs.accepted <= 5) cliPrintUint(hs.accepted); else cliPrint("INV");
     cliPrint(" drv=");
-    if (hs.drive <= 5) cliPrintUint(hs.drive); else cliPrint("OFF");
+    if (hs.driveState <= 5) cliPrintUint(hs.driveState); else cliPrint("OFF");
     cliPrintln("");
 
     /* Current snapshot */
@@ -244,7 +244,7 @@ static void cmdHall(void) {
     cliPrint(" acc=");
     if (hs.accepted <= 5) cliPrintUint(hs.accepted); else cliPrint("INV");
     cliPrint(" drv=");
-    if (hs.drive <= 5) cliPrintUint(hs.drive); else cliPrint("OFF");
+    if (hs.driveState <= 5) cliPrintUint(hs.driveState); else cliPrint("OFF");
     cliPrintln("");
 }
 

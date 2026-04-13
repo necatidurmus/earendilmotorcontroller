@@ -177,5 +177,5 @@ void Hall_GetSnapshot(HallSnapshot *snap) {
     snap->corrected = lastCorrected;
     snap->mapped = lastMapped;
     snap->accepted = lastAcceptedState;
-    snap->drive = currentDriveState;
+    snap->driveState = currentDriveState;
 }
