@@ -55,10 +55,13 @@ earendilmotorcontroller/
 ├── platformio.ini
 ├── README.md
 ├── docs/
-│   ├── architecture.md      Genel mimari açıklaması
-│   ├── control_strategy.md  Senkron komplementer PWM teorisi ve uygulaması
-│   ├── pinout.md            Detaylı pin açıklamaları
-│   └── bringup.md           İlk enerjilemeden motora kadar adımlar
+│   ├── architecture.md      Genel mimari açıklaması (saat ağacı, ISR akışı)
+│   ├── control_strategy.md  Senkron komplementer PWM teorisi ve CCER tablosu
+│   ├── pinout.md            Detaylı pin açıklamaları ve çakışma notları
+│   ├── bringup.md           İlk enerjilemeden motora doğrulama sırası
+│   ├── modules.md           Her .c/.h dosyasının görevi ve API'si
+│   ├── cli_reference.md     Tüm CLI komutlarının detaylı açıklaması
+│   └── config_reference.md  motor_config.h sabitleri ve hesaplama rehberi
 ├── include/
 │   ├── motor_config.h       Tüm pin ve parametre tanımları
 │   ├── board_io.h           Donanım başlatma API'si
