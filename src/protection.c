@@ -38,10 +38,10 @@ static uint16_t currentOffset = 0;
 static uint16_t currentDelta = 0;
 
 /* Protection state */
-static bool     softLimitActive = false;
-static uint8_t  hardStrikes = 0;
-static bool     faultLatched = false;
-static char     faultReason[FAULT_REASON_MAX] = "none";
+static volatile bool     softLimitActive = false;
+static volatile uint8_t  hardStrikes = 0;
+static volatile bool     faultLatched = false;
+static volatile char     faultReason[FAULT_REASON_MAX] = "none";
 
 /* Display setting */
 static float    inaGain = INA_GAIN_DEFAULT;

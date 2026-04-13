@@ -19,6 +19,7 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 
 /*
  * RunMode tipi bldc_commutation.h'de tanımlıdır (tek kaynak).
@@ -76,6 +77,10 @@ static void cliPrintUint(uint32_t val) {
 static void cliPrintInt(int32_t val) {
     if (val < 0) {
         cliPrint("-");
+        if (val == INT32_MIN) {
+            cliPrintUint((uint32_t)(-(val + 1)) + 1);
+            return;
+        }
         val = -val;
     }
     cliPrintUint((uint32_t)val);

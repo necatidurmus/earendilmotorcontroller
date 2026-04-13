@@ -52,7 +52,7 @@
 
 /* === System Configuration === */
 #define VDD_VALUE               ((uint32_t)3300U)  /* 3.3V */
-#define TICK_INT_PRIORITY       ((uint32_t)0U)
+#define TICK_INT_PRIORITY       ((uint32_t)15U)
 #define USE_RTOS                0U
 #define PREFETCH_ENABLE         1U
 #define PRFTBS_ENABLE           1U
