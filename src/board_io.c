@@ -1,21 +1,40 @@
 /*
- * board_io.c — Board-level HAL initialization for Earendil BLDC controller
+ * board_io.c — Earendil BLDC kontrol kartı için donanım başlatma
  *
- * Configures: system clock, GPIO, TIM1 PWM, TIM3 control timer, ADC1, USART1.
- * Uses STM32Cube HAL exclusively — no Arduino dependencies.
+ * STM32F411 Black Pill + L6388 + 6-NMOS köprü
+ * Sadece STM32Cube HAL kullanır — Arduino bağımlılığı yok.
+ *
+ * Pin haritası:
+ *   Hall:      PB6 (A), PB7 (B), PB8 (C) — dijital giriş, pull-up
+ *   Yük. taraf: PA8/PA9/PA10  — TIM1_CH1/CH2/CH3  (AF1) — L6388 INH
+ *   Düş. taraf: PA7/PB0/PB1   — TIM1_CH1N/CH2N/CH3N (AF1) — L6388 INL
+ *   ISENSE:    PA0 — ADC1_IN0
+ *   VSENSE:    PA4 — ADC1_IN4
+ *   CLI:       PA2 (TX) / PA3 (RX) — USART2 (AF7)
+ *   LED:       PC13 — aktif düşük
+ *
+ * TIM1 komplementer PWM mimarisi:
+ *   L6388 gate driver'ı ayrı INH (yüksek taraf) ve INL (düşük taraf) girişlerine
+ *   sahiptir. TIM1_CHx → INH, TIM1_CHxN → INL. Hardware deadtime (BDTR.DTG)
+ *   shoot-through'yu önler. Düşük taraf artık GPIO DEĞİL, timer çıkışıdır.
  */
 
 #include "board_io.h"
-
 #include <string.h>
 
-/* HAL handles — defined here, declared extern in motor_config.h */
+/* ====================================================================
+ * HAL handle tanımları — motor_config.h'de extern olarak bildirilmiş
+ * ==================================================================== */
+
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim3;
-ADC_HandleTypeDef  hadc1;
+ADC_HandleTypeDef hadc1;
 UART_HandleTypeDef huart2;
 
-/* DWT cycle counter for microsecond delay */
+/* ====================================================================
+ * DWT mikrosaniye zamanlayıcısı
+ * ==================================================================== */
+
 static int dwt_initialized = 0;
 
 static void DWT_Init(void) {
@@ -27,17 +46,14 @@ static void DWT_Init(void) {
 }
 
 /* ====================================================================
- * System Clock — 100 MHz from 25 MHz HSE
+ * Sistem Saati — 25 MHz HSE'den 100 MHz
  *
- * HSE=25MHz, PLL_M=25, PLL_N=200, PLL_P=2 -> SYSCLK=100MHz
- * APB1 prescaler=2 -> APB1 clock=50MHz, timer clock=100MHz (x2)
- * APB2 prescaler=1 -> APB2 clock=100MHz, timer clock=200MHz (x2)
+ * HSE=25MHz, PLL_M=25, PLL_N=200, PLL_P=2 → SYSCLK=100MHz
+ * APB1 bölücü=2 → APB1=50MHz, timer saati=100MHz (x2)
+ * APB2 bölücü=1 → APB2=100MHz, timer saati=200MHz (x2)
  *
- * NOTE: The STM32F411 Black Pill has HSE=25MHz. PLL config:
- *   VCO = HSE/M * N = 25/25 * 200 = 200 MHz
- *   SYSCLK = VCO/P = 200/2 = 100 MHz
- *   APB1 = SYSCLK/2 = 50 MHz (timer = 100 MHz)
- *   APB2 = SYSCLK/1 = 100 MHz (timer = 200 MHz)
+ * TIM1 (APB2): 200MHz timer saati
+ * TIM3 (APB1): 100MHz timer saati
  * ==================================================================== */
 
 void BoardIO_InitClock(void) {
@@ -47,26 +63,27 @@ void BoardIO_InitClock(void) {
     __HAL_RCC_PWR_CLK_ENABLE();
     __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
 
-    /* HSE = 25 MHz on Black Pill */
+    /* Black Pill HSE = 25 MHz */
     RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
-    RCC_OscInitStruct.HSEState = RCC_HSE_ON;
-    RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-    RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-    RCC_OscInitStruct.PLL.PLLM = 25;
-    RCC_OscInitStruct.PLL.PLLN = 200;
-    RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
-    RCC_OscInitStruct.PLL.PLLQ = 4;    /* USB clock = 200/4 = 50 MHz */
+    RCC_OscInitStruct.HSEState       = RCC_HSE_ON;
+    RCC_OscInitStruct.PLL.PLLState   = RCC_PLL_ON;
+    RCC_OscInitStruct.PLL.PLLSource  = RCC_PLLSOURCE_HSE;
+    RCC_OscInitStruct.PLL.PLLM       = 25;
+    RCC_OscInitStruct.PLL.PLLN       = 200;
+    RCC_OscInitStruct.PLL.PLLP       = RCC_PLLP_DIV2;  /* VCO/2 = 100 MHz */
+    RCC_OscInitStruct.PLL.PLLQ       = 4;               /* USB = 200/4 = 50 MHz */
 
     if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) {
+        /* Saat hatası — LED yanıp söndür, takılı kal */
         while (1) { BoardIO_LEDToggle(); for (volatile int i = 0; i < 500000; i++); }
     }
 
-    RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
-                                | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
-    RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
-    RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;     /* HCLK = 100 MHz */
-    RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;   /* APB1 = 50 MHz */
-    RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;   /* APB2 = 100 MHz */
+    RCC_ClkInitStruct.ClockType      = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
+                                     | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+    RCC_ClkInitStruct.SYSCLKSource   = RCC_SYSCLKSOURCE_PLLCLK;
+    RCC_ClkInitStruct.AHBCLKDivider  = RCC_SYSCLK_DIV1;   /* HCLK = 100 MHz */
+    RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;     /* APB1 = 50 MHz */
+    RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;     /* APB2 = 100 MHz */
 
     if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_3) != HAL_OK) {
         while (1) { BoardIO_LEDToggle(); for (volatile int i = 0; i < 500000; i++); }
@@ -76,7 +93,10 @@ void BoardIO_InitClock(void) {
 }
 
 /* ====================================================================
- * GPIO Init
+ * GPIO Başlatma
+ *
+ * NOT: PA7/PB0/PB1 artık GPIO output DEĞİL. Bu pinler TIM1_CH1N/CH2N/CH3N
+ * olarak BoardIO_InitPWM() içinde yapılandırılır.
  * ==================================================================== */
 
 void BoardIO_InitGPIO(void) {
@@ -86,78 +106,72 @@ void BoardIO_InitGPIO(void) {
 
     GPIO_InitTypeDef gpio = {0};
 
-    /* LED — PC13, push-pull output */
-    gpio.Pin = LED_PIN;
-    gpio.Mode = GPIO_MODE_OUTPUT_PP;
-    gpio.Pull = GPIO_NOPULL;
+    /* LED — PC13, push-pull, başlangıçta kapalı (aktif düşük) */
+    gpio.Pin   = LED_PIN;
+    gpio.Mode  = GPIO_MODE_OUTPUT_PP;
+    gpio.Pull  = GPIO_NOPULL;
     gpio.Speed = GPIO_SPEED_FREQ_LOW;
     HAL_GPIO_Init(LED_PORT, &gpio);
-    HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_SET); /* LED off (active low on Black Pill) */
+    HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_SET); /* SET = LED kapalı */
 
-    /* Hall inputs — PB6/PB7/PB8, pull-up */
-    gpio.Pin = HALL_A_PIN | HALL_B_PIN | HALL_C_PIN;
-    gpio.Mode = GPIO_MODE_INPUT;
-    gpio.Pull = GPIO_PULLUP;
+    /* Hall girişleri — PB6/PB7/PB8, pull-up */
+    gpio.Pin   = HALL_A_PIN | HALL_B_PIN | HALL_C_PIN;
+    gpio.Mode  = GPIO_MODE_INPUT;
+    gpio.Pull  = GPIO_PULLUP;
     gpio.Speed = GPIO_SPEED_FREQ_HIGH;
-    HAL_GPIO_Init(HALL_A_PORT, &gpio); /* All on GPIOB */
-
-    /* Low-side outputs — PA7, PB0, PB1 — push-pull, initially LOW */
-    gpio.Mode = GPIO_MODE_OUTPUT_PP;
-    gpio.Pull = GPIO_NOPULL;
-    gpio.Speed = GPIO_SPEED_FREQ_HIGH;
-
-    gpio.Pin = AL_PIN;
-    HAL_GPIO_Init(AL_PORT, &gpio);
-    HAL_GPIO_WritePin(AL_PORT, AL_PIN, GPIO_PIN_RESET);
-
-    gpio.Pin = BL_PIN;
-    HAL_GPIO_Init(BL_PORT, &gpio);
-    HAL_GPIO_WritePin(BL_PORT, BL_PIN, GPIO_PIN_RESET);
-
-    gpio.Pin = CL_PIN;
-    HAL_GPIO_Init(CL_PORT, &gpio);
-    HAL_GPIO_WritePin(CL_PORT, CL_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_Init(HALL_A_PORT, &gpio); /* Üçü de GPIOB'de */
 }
 
 /* ====================================================================
- * TIM1 PWM — High-side outputs PA8/PA9/PA10 (TIM1_CH1/CH2/CH3)
+ * TIM1 Komplementer PWM — 6 kanal (CH1/CH2/CH3 + CH1N/CH2N/CH3N)
  *
- * APB2 timer clock = 200 MHz
- * Prescaler = 0  -> 200 MHz tick
- * Period = PWM_PERIOD_COUNTS = 3332 -> 200 MHz / 3333 = ~60 kHz...
+ * Yüksek taraf:  PA8(CH1), PA9(CH2), PA10(CH3)  — AF1 — L6388 INH
+ * Düşük taraf:   PA7(CH1N), PB0(CH2N), PB1(CH3N) — AF1 — L6388 INL
  *
- * WAIT — let me recalculate:
- *   If APB2 prescaler = 1, APB2 clock = 100 MHz, timer clock = 200 MHz
- *   But we want 30 kHz PWM.
- *   Period = 200 MHz / 30 kHz - 1 = 6666 - 1 = 6665
- *   That gives ~10.5 bits resolution.
+ * TIM1 gelişmiş timer özellikleri:
+ *   - Komplementer çıkışlar (CH ve CHN birbirine göre terslenmiş + deadtime)
+ *   - Hardware deadtime insertion (BDTR.DTG ayarı)
+ *   - OSSR=1: timer çalışırken çıkışlar idle state'i korur (güvenli)
+ *   - MOE (Main Output Enable) aktif et
  *
- *   Alternatively, use prescaler=1:
- *   200 MHz / 2 = 100 MHz tick
- *   Period = 100 MHz / 30 kHz - 1 = 3333 - 1 = 3332
- *   That gives ~10 bits resolution, matching Arduino config.
+ * APB2 timer saati = 200 MHz
+ * Ön bölücü = 1 → 200/2 = 100 MHz tick (tdts = 10 ns)
+ * Periyot = 3332 → 100 MHz / 3333 ≈ 30 kHz PWM
  *
- * We use prescaler=1, period=3332.
+ * Deadtime hesabı:
+ *   DTG[7:0] bit7=0: deadtime = DTG × tdts
+ *   DEADTIME_COUNTS=50 → 50 × 10ns = 500 ns MCU tarafı deadtime
+ *   L6388 ayrıca ~300-400 ns iç deadtime ekler
+ *   Toplam efektif deadtime: ~800-900 ns (bench'te doğrula)
  * ==================================================================== */
 
 void BoardIO_InitPWM(void) {
     __HAL_RCC_TIM1_CLK_ENABLE();
 
-    /* Configure TIM1 GPIO: PA8/PA9/PA10 as AF1 (TIM1_CH1/CH2/CH3) */
     GPIO_InitTypeDef gpio = {0};
-    gpio.Pin = AH_PIN | BH_PIN | CH_PIN;
-    gpio.Mode = GPIO_MODE_AF_PP;
-    gpio.Pull = GPIO_NOPULL;
-    gpio.Speed = GPIO_SPEED_FREQ_HIGH;
+    gpio.Mode      = GPIO_MODE_AF_PP;
+    gpio.Pull      = GPIO_NOPULL;
+    gpio.Speed     = GPIO_SPEED_FREQ_HIGH;
     gpio.Alternate = GPIO_AF1_TIM1;
+
+    /* Yüksek taraf pinleri: PA8(CH1), PA9(CH2), PA10(CH3) */
+    gpio.Pin = AH_PIN | BH_PIN | CH_PIN;  /* GPIO_PIN_8 | 9 | 10 */
     HAL_GPIO_Init(GPIOA, &gpio);
 
-    /* TIM1 time base */
-    htim1.Instance = TIM1;
-    htim1.Init.Prescaler = 1;                          /* 200 MHz / 2 = 100 MHz */
-    htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-    htim1.Init.Period = PWM_PERIOD_COUNTS;              /* 100 MHz / 3333 = 30 kHz */
-    htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+    /* Düşük taraf pinleri: PA7(CH1N) */
+    gpio.Pin = AL_PIN;  /* PA7 = GPIO_PIN_7 */
+    HAL_GPIO_Init(AL_PORT, &gpio);
+
+    /* Düşük taraf pinleri: PB0(CH2N), PB1(CH3N) */
+    gpio.Pin = BL_PIN | CL_PIN;  /* PB0 | PB1 */
+    HAL_GPIO_Init(BL_PORT, &gpio);
+
+    /* TIM1 zaman tabanı */
+    htim1.Instance               = TIM1;
+    htim1.Init.Prescaler         = 1;                 /* 200 MHz / 2 = 100 MHz */
+    htim1.Init.CounterMode       = TIM_COUNTERMODE_UP;
+    htim1.Init.Period            = PWM_PERIOD_COUNTS; /* 100 MHz / 3333 ≈ 30 kHz */
+    htim1.Init.ClockDivision     = TIM_CLOCKDIVISION_DIV1;
     htim1.Init.RepetitionCounter = 0;
     htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
 
@@ -165,116 +179,152 @@ void BoardIO_InitPWM(void) {
         while (1);
     }
 
-    /* PWM channel configuration */
-    TIM_OC_InitTypeDef sConfigOC = {0};
-    sConfigOC.OCMode = TIM_OCMODE_PWM1;
-    sConfigOC.Pulse = 0;                               /* start with 0% duty */
-    sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-    sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
-    sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
+    /*
+     * PWM kanal yapılandırması.
+     * OCPreload aktif: CCR değişimleri bir sonraki update event'inde geçerli olur.
+     * Bu, olası CCR/CCER geçiş anlık tutarsızlıklarını önler.
+     */
+    TIM_OC_InitTypeDef oc = {0};
+    oc.OCMode       = TIM_OCMODE_PWM1;      /* CNT < CCR → HIGH */
+    oc.Pulse        = 0;                    /* başlangıçta 0% duty */
+    oc.OCPolarity   = TIM_OCPOLARITY_HIGH;
+    oc.OCNPolarity  = TIM_OCNPOLARITY_HIGH; /* CHN de aynı polarite (komplementer ters) */
+    oc.OCFastMode   = TIM_OCFAST_DISABLE;
+    oc.OCIdleState  = TIM_OCIDLESTATE_RESET;  /* idle'da CH = 0 (yüksek taraf MOSFET kapalı) */
+    oc.OCNIdleState = TIM_OCNIDLESTATE_RESET; /* idle'da CHN = 0 (düşük taraf MOSFET kapalı) */
 
-    HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_1);  /* PA8 — AH */
-    HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_2);  /* PA9 — BH */
-    HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_3);  /* PA10 — CH */
+    HAL_TIM_PWM_ConfigChannel(&htim1, &oc, TIM_CHANNEL_1);  /* PA8 — AH */
+    HAL_TIM_PWM_ConfigChannel(&htim1, &oc, TIM_CHANNEL_2);  /* PA9 — BH */
+    HAL_TIM_PWM_ConfigChannel(&htim1, &oc, TIM_CHANNEL_3);  /* PA10 — CH */
 
-    /* TIM1 is an advanced timer — need to enable main output */
-    TIM_BreakDeadTimeConfigTypeDef sBreakDTConfig = {0};
-    sBreakDTConfig.OffStateRunMode = TIM_OSSR_DISABLE;
-    sBreakDTConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
-    sBreakDTConfig.LockLevel = TIM_LOCKLEVEL_OFF;
-    sBreakDTConfig.DeadTime = 0;                        /* no hardware dead-time */
-    sBreakDTConfig.BreakState = TIM_BREAK_DISABLE;
-    sBreakDTConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
-    sBreakDTConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
-    HAL_TIMEx_ConfigBreakDeadTime(&htim1, &sBreakDTConfig);
+    /*
+     * Break ve Deadtime Register (BDTR) yapılandırması.
+     *
+     * OSSR=1 (Off-State Run Mode):
+     *   Timer çalışırken devre dışı bırakılan bir çıkış idle state'ine gider
+     *   (OCxIdleState=RESET → pin LOW → MOSFET kapalı). Motor sürülürken
+     *   float fazın güvenli şekilde 0'da kalmasını sağlar.
+     *
+     * DeadTime=DEADTIME_COUNTS:
+     *   Hardware deadtime. CH HIGH'a geçerken CHN'nin önce kapanmasını bekler
+     *   ve tersinde de aynı. Shoot-through'ya karşı primer donanım koruması.
+     *
+     * BreakState=DISABLE: Harici break girişi kullanılmıyor (üzeri LOK).
+     *   İleride OCP sinyali gelirse aktif edilebilir.
+     *
+     * AutomaticOutput=DISABLE: MOE biti yazılımdan kontrol edilir,
+     *   break sonrası otomatik açılmaz.
+     */
+    TIM_BreakDeadTimeConfigTypeDef bdtr = {0};
+    bdtr.OffStateRunMode  = TIM_OSSR_ENABLE;          /* çalışırken idle geçerli */
+    bdtr.OffStateIDLEMode = TIM_OSSI_ENABLE;          /* dururken de idle geçerli */
+    bdtr.LockLevel        = TIM_LOCKLEVEL_OFF;
+    bdtr.DeadTime         = DEADTIME_COUNTS;          /* 50 → 500 ns */
+    bdtr.BreakState       = TIM_BREAK_DISABLE;
+    bdtr.BreakPolarity    = TIM_BREAKPOLARITY_HIGH;
+    bdtr.AutomaticOutput  = TIM_AUTOMATICOUTPUT_DISABLE;
 
-    /* Start PWM on all 3 channels */
-    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
-    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
+    if (HAL_TIMEx_ConfigBreakDeadTime(&htim1, &bdtr) != HAL_OK) {
+        while (1);
+    }
+
+    /*
+     * Tüm 6 kanalı başlat.
+     * HAL_TIM_PWM_Start → CH (yüksek taraf)
+     * HAL_TIMEx_PWMN_Start → CHN (düşük taraf, komplementer)
+     * İkisi de çalışır durumda olmalı; CCER ile enable/disable edilir.
+     */
+    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);       /* PA8 — AH */
+    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);       /* PA9 — BH */
+    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);       /* PA10 — CH */
+    HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1);   /* PA7 — AL */
+    HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_2);   /* PB0 — BL */
+    HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_3);   /* PB1 — CL */
+
+    /* Başlangıçta tüm kanalları devre dışı bırak — güvenli durum */
+    /* CCR=0, CCER=0 → tüm pinler idle state = 0 */
+    TIM1->CCR1 = 0;
+    TIM1->CCR2 = 0;
+    TIM1->CCR3 = 0;
+    TIM1->CCER = 0;
 }
 
 /* ====================================================================
- * TIM3 Control Timer — 12.5 kHz ISR
+ * TIM3 Kontrol Zamanlayıcısı — 12.5 kHz ISR
  *
- * APB1 timer clock = 100 MHz
- * Prescaler = 83 -> 100 MHz / 84 = 1.190476 MHz...
- *
- * Wait, recalculate from clock tree:
- *   APB1 = 50 MHz, timer clock = 100 MHz (x2 because APB1 prescaler != 1)
- *   Actually APB1 prescaler = 2, so timer clock = 50 * 2 = 100 MHz
- *
- *   Prescaler = 99 -> 100 MHz / 100 = 1 MHz
- *   Period = 79 -> 1 MHz / 80 = 12.5 kHz
- *
- * Hmm, but the old code had APB1=84MHz, timer=84MHz.
- * With our 100 MHz PLL: APB1=50MHz, timer=100MHz.
- * So prescaler = 99 (100MHz/100 = 1MHz), period = 79 (1MHz/80 = 12.5kHz).
+ * APB1 timer saati = 100 MHz
+ * Ön bölücü = 99 → 100 MHz / 100 = 1 MHz
+ * Periyot = 79 → 1 MHz / 80 = 12.5 kHz
  * ==================================================================== */
 
 void BoardIO_InitControlTimer(void) {
     __HAL_RCC_TIM3_CLK_ENABLE();
 
-    htim3.Instance = TIM3;
-    htim3.Init.Prescaler = 99;             /* 100 MHz / 100 = 1 MHz */
-    htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
-    htim3.Init.Period = CTRL_TIMER_PERIOD;  /* 79 -> 1 MHz / 80 = 12.5 kHz */
-    htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+    htim3.Instance               = TIM3;
+    htim3.Init.Prescaler         = CTRL_TIMER_PRESCALER;  /* 99 → 1 MHz */
+    htim3.Init.CounterMode       = TIM_COUNTERMODE_UP;
+    htim3.Init.Period            = CTRL_TIMER_PERIOD;     /* 79 → 12.5 kHz */
+    htim3.Init.ClockDivision     = TIM_CLOCKDIVISION_DIV1;
     htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
 
     if (HAL_TIM_Base_Init(&htim3) != HAL_OK) {
         while (1);
     }
 
-    /* Configure update interrupt */
+    /* Update interrupt — en yüksek öncelik (TIM1 PWM ile çakışmasın) */
     HAL_NVIC_SetPriority(TIM3_IRQn, 0, 0);
     HAL_NVIC_EnableIRQ(TIM3_IRQn);
 }
 
-/* Start control timer — call after all other inits */
+/* Tüm init'ler tamamlandıktan sonra çağır */
 void BoardIO_StartControlTimer(void) {
     HAL_TIM_Base_Start_IT(&htim3);
 }
 
 /* ====================================================================
- * ADC1 Init — ISENSE (PA0/IN0) and VSENSE (PA4/IN4)
+ * ADC1 Başlatma — ISENSE (PA0/IN0) ve VSENSE (PA4/IN4)
+ *
+ * ADC saati: PCLK2/4 = 100/4 = 25 MHz (maks 36 MHz sınırının altında)
+ * BlockingReadADC ISR içinden decimation ile çağrılır.
+ * Her okuma ≈ (84+12)/25MHz = 3.84 us.
+ * ADC_DECIMATION=4 → ortalama ~0.96 us/tick ISR yükü — kabul edilebilir.
  * ==================================================================== */
 
 void BoardIO_InitADC(void) {
     __HAL_RCC_ADC1_CLK_ENABLE();
 
-    /* ADC GPIO: PA0 and PA4 as analog */
+    /* PA0 ve PA4 analog mod */
     GPIO_InitTypeDef gpio = {0};
-    gpio.Pin = ISENSE_ADC_PIN | VSENSE_ADC_PIN;
+    gpio.Pin  = ISENSE_ADC_PIN | VSENSE_ADC_PIN;
     gpio.Mode = GPIO_MODE_ANALOG;
     gpio.Pull = GPIO_NOPULL;
     HAL_GPIO_Init(GPIOA, &gpio);
 
-    hadc1.Instance = ADC1;
-    hadc1.Init.Resolution = ADC_RESOLUTION_12B;
-    hadc1.Init.ScanConvMode = DISABLE;              /* single channel mode */
-    hadc1.Init.ContinuousConvMode = DISABLE;        /* single conversion */
+    hadc1.Instance                   = ADC1;
+    hadc1.Init.Resolution            = ADC_RESOLUTION_12B;
+    hadc1.Init.ScanConvMode          = DISABLE;         /* tek kanal */
+    hadc1.Init.ContinuousConvMode    = DISABLE;         /* tek dönüşüm */
     hadc1.Init.DiscontinuousConvMode = DISABLE;
-    hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
-    hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-    hadc1.Init.NbrOfConversion = 1;
+    hadc1.Init.ExternalTrigConv      = ADC_SOFTWARE_START;
+    hadc1.Init.DataAlign             = ADC_DATAALIGN_RIGHT;
+    hadc1.Init.NbrOfConversion       = 1;
 
     if (HAL_ADC_Init(&hadc1) != HAL_OK) {
         while (1);
     }
 
-    /* ADC prescaler: PCLK2/4 = 100/4 = 25 MHz (must be < 36 MHz) */
+    /* ADC ön bölücü: PCLK2/4 = 25 MHz */
     ADC1_COMMON->CCR = ADC_CCR_ADCPRE_0;  /* 01 = /4 */
 }
 
-/* Blocking single-channel ADC read */
+/* Blocking tek kanal ADC okuma */
 uint16_t BoardIO_ReadADC(uint32_t channel) {
-    ADC_ChannelConfTypeDef sConfig = {0};
-    sConfig.Channel = channel;
-    sConfig.Rank = 1;
-    sConfig.SamplingTime = ADC_SAMPLETIME_84CYCLES; /* enough settling time */
+    ADC_ChannelConfTypeDef cfg = {0};
+    cfg.Channel      = channel;
+    cfg.Rank         = 1;
+    cfg.SamplingTime = ADC_SAMPLETIME_84CYCLES; /* yeterli oturma süresi */
 
-    HAL_ADC_ConfigChannel(&hadc1, &sConfig);
+    HAL_ADC_ConfigChannel(&hadc1, &cfg);
     HAL_ADC_Start(&hadc1);
 
     if (HAL_ADC_PollForConversion(&hadc1, 2) == HAL_OK) {
@@ -284,34 +334,11 @@ uint16_t BoardIO_ReadADC(uint32_t channel) {
 }
 
 /* ====================================================================
- * USART1 Init — CLI serial (PA9=TX, PA10=RX)
+ * USART2 Başlatma — CLI (PA2=TX, PA3=RX)
  *
- * NOTE: PA9/PA10 are also TIM1_CH2/CH3 (PWM outputs).
- * USART1 TX/RX needs remap or alternate pin.
- *
- * Actually: STM32F411 PA9 = TIM1_CH2 (AF1) or USART1_TX (AF7)
- *           PA10 = TIM1_CH3 (AF1) or USART1_RX (AF7)
- *
- * CONFLICT: PA9 and PA10 are used for both TIM1 PWM AND USART1.
- * This is a hardware conflict. USART1 must use different pins.
- *
- * Available USART1 pins:
- *   TX: PB6 (conflict with Hall_A), PA9 (conflict with TIM1_CH2)
- *   RX: PB7 (conflict with Hall_B), PA10 (conflict with TIM1_CH3)
- *
- * USART2: PA2(TX)/PA3(RX) — available!
- *   But USART2 is on APB1 (50 MHz).
- *
- * Decision: Use USART2 on PA2/PA3 for CLI.
- * The original Arduino firmware used USB CDC which doesn't conflict.
- * For now we use UART2 as the simplest non-conflicting option.
+ * PA9/PA10 TIM1_CH2/CH3 ile çakışır → USART2 PA2/PA3 kullanır.
+ * USART2 APB1'de (50 MHz), 115200 baud sorunsuz çalışır.
  * ==================================================================== */
-
-/* Re-definition: CLI UART is actually USART2 */
-#undef CLI_UART_HANDLE
-#define CLI_UART_HANDLE huart2
-
-UART_HandleTypeDef huart2;
 
 void BoardIO_InitUART(void) {
     __HAL_RCC_USART2_CLK_ENABLE();
@@ -319,20 +346,20 @@ void BoardIO_InitUART(void) {
 
     /* PA2 = USART2_TX, PA3 = USART2_RX — AF7 */
     GPIO_InitTypeDef gpio = {0};
-    gpio.Pin = GPIO_PIN_2 | GPIO_PIN_3;
-    gpio.Mode = GPIO_MODE_AF_PP;
-    gpio.Pull = GPIO_PULLUP;
-    gpio.Speed = GPIO_SPEED_FREQ_HIGH;
+    gpio.Pin       = GPIO_PIN_2 | GPIO_PIN_3;
+    gpio.Mode      = GPIO_MODE_AF_PP;
+    gpio.Pull      = GPIO_PULLUP;
+    gpio.Speed     = GPIO_SPEED_FREQ_HIGH;
     gpio.Alternate = GPIO_AF7_USART2;
     HAL_GPIO_Init(GPIOA, &gpio);
 
-    huart2.Instance = USART2;
-    huart2.Init.BaudRate = CLI_BAUD;
-    huart2.Init.WordLength = UART_WORDLENGTH_8B;
-    huart2.Init.StopBits = UART_STOPBITS_1;
-    huart2.Init.Parity = UART_PARITY_NONE;
-    huart2.Init.Mode = UART_MODE_TX_RX;
-    huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+    huart2.Instance          = USART2;
+    huart2.Init.BaudRate     = CLI_BAUD;
+    huart2.Init.WordLength   = UART_WORDLENGTH_8B;
+    huart2.Init.StopBits     = UART_STOPBITS_1;
+    huart2.Init.Parity       = UART_PARITY_NONE;
+    huart2.Init.Mode         = UART_MODE_TX_RX;
+    huart2.Init.HwFlowCtl    = UART_HWCONTROL_NONE;
     huart2.Init.OverSampling = UART_OVERSAMPLING_16;
 
     if (HAL_UART_Init(&huart2) != HAL_OK) {
@@ -341,7 +368,8 @@ void BoardIO_InitUART(void) {
 }
 
 /* ====================================================================
- * PWM duty setters
+ * PWM duty setter'ları — sadece CCR değerini günceller.
+ * CCER enable/disable komütasyon katmanında yapılır.
  * ==================================================================== */
 
 void BoardIO_SetPWMA(uint16_t duty) {
@@ -362,19 +390,17 @@ void BoardIO_SetAllPWM(uint16_t a, uint16_t b, uint16_t c) {
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, c);
 }
 
-/* ====================================================================
- * Low-side GPIO
- * ==================================================================== */
-
-void BoardIO_SetLowSide(int al, int bl, int cl) {
-    HAL_GPIO_WritePin(AL_PORT, AL_PIN, al ? GPIO_PIN_SET : GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(BL_PORT, BL_PIN, bl ? GPIO_PIN_SET : GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(CL_PORT, CL_PIN, cl ? GPIO_PIN_SET : GPIO_PIN_RESET);
-}
-
+/*
+ * Tüm çıkışları kapat — güvenli durum.
+ * CCR=0 (duty %0), CCER=0 (tüm kanallar devre dışı).
+ * OSSR=1 ve idle state=0 olduğu için pinler LOW'da kalır
+ * → L6388 INH=0, INL=0 → yüksek ve düşük taraf MOSFET'ler kapalı.
+ */
 void BoardIO_AllOff(void) {
-    BoardIO_SetAllPWM(0, 0, 0);
-    BoardIO_SetLowSide(0, 0, 0);
+    TIM1->CCR1 = 0;
+    TIM1->CCR2 = 0;
+    TIM1->CCR3 = 0;
+    TIM1->CCER = 0;
 }
 
 /* ====================================================================
@@ -382,7 +408,7 @@ void BoardIO_AllOff(void) {
  * ==================================================================== */
 
 void BoardIO_LEDOn(void) {
-    HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_RESET); /* active low */
+    HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_RESET); /* aktif düşük */
 }
 
 void BoardIO_LEDOff(void) {
@@ -394,27 +420,28 @@ void BoardIO_LEDToggle(void) {
 }
 
 /* ====================================================================
- * Microsecond delay via DWT cycle counter
+ * DWT döngü sayacıyla mikrosaniye gecikme
+ * Sadece kalibrasyon sırasında kullanılır, ISR içinde ASLA çağrılmaz.
  * ==================================================================== */
 
 void BoardIO_DelayUs(uint32_t us) {
     if (!dwt_initialized) return;
-    uint32_t cycles = us * (SystemCoreClock / 1000000);
-    uint32_t start = DWT->CYCCNT;
+    uint32_t cycles = us * (SystemCoreClock / 1000000U);
+    uint32_t start  = DWT->CYCCNT;
     while ((DWT->CYCCNT - start) < cycles) { }
 }
 
 /* ====================================================================
- * Master init
+ * Ana başlatma — doğru sırada
  * ==================================================================== */
 
 void BoardIO_InitAll(void) {
-    HAL_Init();             /* HAL_Init sets up SysTick at 1 kHz */
+    HAL_Init();               /* HAL_Init SysTick'i 1 kHz'de kurar */
     BoardIO_InitClock();
     BoardIO_InitGPIO();
     BoardIO_InitADC();
-    BoardIO_InitPWM();
+    BoardIO_InitPWM();        /* TIM1 komplementer + deadtime */
     BoardIO_InitControlTimer();
     BoardIO_InitUART();
-    BoardIO_AllOff();
+    BoardIO_AllOff();         /* Güvenli başlangıç durumu */
 }

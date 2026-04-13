@@ -1,13 +1,19 @@
 /*
- * board_io.h — Board-level GPIO, PWM, and ADC initialization
+ * board_io.h — Kart seviyesi GPIO, PWM ve ADC başlatma
  *
- * Wraps STM32Cube HAL init calls for:
- *   - System clock (100 MHz from 25 MHz HSE)
- *   - GPIO pins (hall inputs, low-side outputs, LED)
- *   - TIM1 PWM outputs (high-side PA8/PA9/PA10)
- *   - TIM3 control timer (12.5 kHz ISR)
+ * STM32Cube HAL init çağrılarını şunlar için sarar:
+ *   - Sistem saati (25 MHz HSE'den 100 MHz)
+ *   - GPIO pinleri (hall girişleri, LED)
+ *   - TIM1 komplementer PWM çıkışları:
+ *       Yüksek taraf: PA8/PA9/PA10  → TIM1_CH1/CH2/CH3  (AF1)
+ *       Düşük taraf:  PA7/PB0/PB1   → TIM1_CH1N/CH2N/CH3N (AF1)
+ *   - TIM3 kontrol zamanlayıcısı (12.5 kHz ISR)
  *   - ADC1 (ISENSE PA0, VSENSE PA4)
- *   - USART1 CLI serial
+ *   - USART2 CLI seri (PA2/PA3)
+ *
+ * Önemli: Düşük taraf pinler artık GPIO değil, TIM1 çıkışıdır.
+ * BoardIO_SetLowSide() API'si kaldırıldı. Komütasyon TIM1 CCER/CCR
+ * ile doğrudan register seviyesinde yapılır.
  */
 
 #ifndef BOARD_IO_H
@@ -19,39 +25,36 @@
 extern "C" {
 #endif
 
-/* Call all init functions in correct order */
+/* Tüm başlatma fonksiyonlarını doğru sırada çağır */
 void BoardIO_InitAll(void);
 
-/* Individual subsystem init (called by InitAll, exposed for testing) */
+/* Alt sistem başlatma (InitAll tarafından çağrılır, test için açık) */
 void BoardIO_InitClock(void);
 void BoardIO_InitGPIO(void);
-void BoardIO_InitPWM(void);
+void BoardIO_InitPWM(void);           /* TIM1 komplementer + deadtime */
 void BoardIO_InitControlTimer(void);
 void BoardIO_StartControlTimer(void);
 void BoardIO_InitADC(void);
 void BoardIO_InitUART(void);
 
-/* PWM duty control — duty is in 0..PWM_PERIOD_COUNTS range */
+/* PWM duty kontrolü — duty 0..PWM_PERIOD_COUNTS aralığında */
 void BoardIO_SetPWMA(uint16_t duty);
 void BoardIO_SetPWMB(uint16_t duty);
 void BoardIO_SetPWMC(uint16_t duty);
 void BoardIO_SetAllPWM(uint16_t a, uint16_t b, uint16_t c);
 
-/* Low-side GPIO control */
-void BoardIO_SetLowSide(int al, int bl, int cl);
-
-/* Shorthand: all outputs off */
+/* Kısa yol: tüm çıkışlar kapalı (CCER sıfır + CCR sıfır) */
 void BoardIO_AllOff(void);
 
-/* ADC blocking read */
+/* ADC blocking okuma */
 uint16_t BoardIO_ReadADC(uint32_t channel);
 
-/* LED toggle */
+/* LED */
 void BoardIO_LEDOn(void);
 void BoardIO_LEDOff(void);
 void BoardIO_LEDToggle(void);
 
-/* Microsecond delay using DWT cycle counter */
+/* DWT döngü sayacı ile mikrosaniye gecikme */
 void BoardIO_DelayUs(uint32_t us);
 
 #ifdef __cplusplus
