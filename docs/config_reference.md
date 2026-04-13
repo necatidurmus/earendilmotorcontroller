@@ -1,3 +1,5 @@
+
+
 # Konfigürasyon Referansı — `motor_config.h`
 
 Donanım değişikliği veya parametre ayarı için tek dokunma noktası. Her sabitin ne yaptığı, hangi hesaplamadan çıktığı ve nasıl ayarlanacağı aşağıda açıklanmıştır.
