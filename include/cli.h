@@ -1,7 +1,7 @@
 /*
  * cli.h — Serial command-line interface for motor bring-up
  *
- * Uses UART (USART1) for all commands and telemetry.
+ * Uses USART2 (PA2=TX, PA3=RX) for all commands and telemetry.
  * USB CDC can be added later — UART is simpler to get running first.
  *
  * Commands:

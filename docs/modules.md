@@ -32,7 +32,7 @@ Dışarıya açılan fonksiyonlar:
 | Fonksiyon | Ne Yapar |
 |---|---|
 | `BoardIO_InitAll()` | Tüm alt sistemleri sırayla başlatır |
-| `BoardIO_InitClock()` | 25 MHz HSE → 100 MHz SYSCLK PLL kurar |
+| `BoardIO_InitClock()` | 25 MHz HSE → 96 MHz SYSCLK PLL kurar |
 | `BoardIO_InitGPIO()` | LED, hall pinleri |
 | `BoardIO_InitPWM()` | TIM1 komplementer PWM (6 kanal + deadtime) |
 | `BoardIO_InitControlTimer()` | TIM3 ISR zamanlayıcısı |
@@ -151,6 +151,24 @@ Kullanılmayan modüller devre dışıdır → derleme boyutu küçüktür.
 
 ---
 
+### `usbd_conf.h`
+
+**USB Device donanım soyutlama katmanı.**
+
+STM32F411 USB OTG FS (PA11/PA12) için HAL PCD entegrasyonu. Endpoint sayısı, bellek ayarları, debug seviyesi tanımlar.
+
+CDC modda CLI_TRANSPORT_CDC seçildiğinde kullanılır.
+
+---
+
+### `usbd_conf.c`
+
+**USB Device donanım yapılandırması.**
+
+`CLI_TRANSPORT_CDC` aktifken `board_io.c` tarafından `MX_USB_DEVICE_Init()` üzerinden çağrılır. USB stack init, endpoint yapılandırması, CDC sınıfı ayarlarını içerir.
+
+---
+
 ### `stm32f4xx_it.h`
 
 **Kesme servis rutini (ISR) fonksiyon bildirimleri.**
@@ -187,7 +205,7 @@ Ana döngü: yalnızca `CLI_Service()` ve LED blink.
 `BoardIO_InitPWM()` bu projedeki en kritik fonksiyon:
 - PA7/PB0/PB1'i GPIO yerine TIM1_CH1N/CH2N/CH3N (AF1) olarak init eder
 - 6 kanalı başlatır (3 yüksek taraf + 3 düşük taraf)
-- BDTR deadtime ayarlar (DEADTIME_COUNTS = 500 ns)
+- BDTR deadtime ayarlar (DEADTIME_COUNTS = 50 → ~521 ns MCU tarafı)
 - OSSR/OSSI = 1 (güvenli idle state)
 
 ---
