@@ -151,24 +151,6 @@ Kullanılmayan modüller devre dışıdır → derleme boyutu küçüktür.
 
 ---
 
-### `usbd_conf.h`
-
-**USB Device donanım soyutlama katmanı.**
-
-STM32F411 USB OTG FS (PA11/PA12) için HAL PCD entegrasyonu. Endpoint sayısı, bellek ayarları, debug seviyesi tanımlar.
-
-CDC modda CLI_TRANSPORT_CDC seçildiğinde kullanılır.
-
----
-
-### `usbd_conf.c`
-
-**USB Device donanım yapılandırması.**
-
-`CLI_TRANSPORT_CDC` aktifken `board_io.c` tarafından `MX_USB_DEVICE_Init()` üzerinden çağrılır. USB stack init, endpoint yapılandırması, CDC sınıfı ayarlarını içerir.
-
----
-
 ### `stm32f4xx_it.h`
 
 **Kesme servis rutini (ISR) fonksiyon bildirimleri.**

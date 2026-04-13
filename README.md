@@ -168,7 +168,6 @@ L6388 ayrı INH ve INL girişlerine sahiptir. TIM1_CHx → INH, TIM1_CHxN → IN
 | Fault latch | Çıkışlar kapalı, mod STOPPED, 'clear' olmadan tekrar çalışmaz |
 | Geçersiz hall | Çıkışlar hemen kapalı |
 | Undervoltage | **TODO** — VSENSE ölçeği doğrulanmadan eklenmedi |
-| Termal | **TODO** — NTC eklendikten sonra aktif edilecek |
 
 ---
 
@@ -256,8 +255,6 @@ pio device monitor --baud 115200
 - [ ] TIM1 Break girişine OCP bağlantısı (donanım overcurrent trip)
 - [ ] DMA veya timer-triggered ADC (blocking ADC → ISR yükü azalt)
 - [ ] Undervoltage koruması (VSENSE doğrulandığında)
-- [ ] Termal koruma (NTC eklendikten sonra)
 - [ ] IWDG watchdog timer
 - [ ] RPM / hız geri bildirimi (hall geçiş süresi → RPM)
 - [ ] Closed-loop PI hız kontrolü
-- [ ] USB CDC CLI (UART2 yerine, PA9/PA10'u kurtarmak için)

@@ -29,6 +29,13 @@ typedef struct {
     uint8_t  hardStrikesToTrip; /* consecutive strikes before latch */
 } ProtectionConfig;
 
+typedef struct {
+    bool     enabled;
+    uint16_t limitMv;
+    uint16_t hysteresisMv;
+    uint8_t  strikesToTrip;
+} UndervoltageConfig;
+
 /* Diagnostic snapshot for CLI */
 typedef struct {
     uint16_t currentRaw;        /* latest raw ISENSE ADC reading */
@@ -36,9 +43,11 @@ typedef struct {
     uint16_t currentOffset;     /* calibrated zero-current baseline */
     uint16_t currentDelta;      /* filtered - offset (clamped >= 0) */
     uint16_t voltageRaw;        /* latest VSENSE ADC reading */
+    float    estimatedVolts;    /* display-only bus voltage estimate */
     float    estimatedAmps;     /* display-only current estimate */
     bool     softLimitActive;   /* true if soft limiter is reducing duty */
     uint8_t  hardStrikes;       /* current consecutive strike count */
+    uint8_t  undervoltageStrikes; /* consecutive undervoltage strike count */
 } ProtectionSnapshot;
 
 /* Initialize protection module */
@@ -60,6 +69,9 @@ uint16_t Prot_ApplySoftLimit(uint16_t requestedDuty);
  */
 bool Prot_CheckHardLimit(void);
 
+/* Check undervoltage. Returns true if fault was latched. Called from ISR. */
+bool Prot_CheckUndervoltage(void);
+
 /*
  * Slew-limit duty from current to target.
  * Called from ISR.
@@ -78,6 +90,8 @@ const char* Prot_GetFaultReason(void);
 /* Config updates from CLI */
 void Prot_SetLimits(uint16_t soft, uint16_t hard);
 void Prot_GetConfig(ProtectionConfig *cfg);
+void Prot_SetUndervoltageConfig(const UndervoltageConfig *cfg);
+void Prot_GetUndervoltageConfig(UndervoltageConfig *cfg);
 
 /* Get diagnostic snapshot */
 void Prot_GetSnapshot(ProtectionSnapshot *snap);
@@ -85,6 +99,7 @@ void Prot_GetSnapshot(ProtectionSnapshot *snap);
 /* INA gain setting for display conversion only */
 void Prot_SetInaGain(float gain);
 float Prot_GetEstimatedAmps(void);
+float Prot_GetEstimatedVolts(void);
 
 #ifdef __cplusplus
 }

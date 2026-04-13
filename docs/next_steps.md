@@ -13,17 +13,15 @@
 ## Phase 2: Ölçüm Sonrası Mimari Kararlar
 
 6. **ADC DMA'ye geçiş değerlendirmesi** — ISR blocking ADC jitter riski
-7. **USB CDC'ye geçiş** — UART bring-up tamamlanınca
-8. **TIM1 Break girişi** — donanım OCP hattı netleşince
+7. **TIM1 Break girişi** — donanım OCP hattı netleşince
 
 ## Phase 3: Güvenlik ve Feature Eksiklikleri
 
 9. **IWDG watchdog timer** — ISR/main loop takılmasına karşı koruma
 10. **Undervoltage koruması** — VSENSE doğrulanınca eklenecek
-11. **Termal koruma (NTC)** — NTC donanımı eklenince
-12. **Throttle input** — hardware mevcut, ADC kanalını belirle
-13. **RPM feedback** — hall geçiş süresi → hız tahmini
-14. **Closed-loop PI** — hedef RPM için kapalı çevrim kontrol
+11. **Throttle input** — hardware mevcut, ADC kanalını belirle
+12. **RPM feedback** — hall geçiş süresi → hız tahmini
+13. **Closed-loop PI** — hedef RPM için kapalı çevrim kontrol
 
 ## Notlar
 - Her milestone sonrası `project_status.md` güncelle

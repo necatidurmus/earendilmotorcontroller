@@ -8,11 +8,6 @@ HSE 25 MHz
        ├─ AHB  /1 → HCLK  = 96 MHz
        ├─ APB1 /2 → PCLK1 = 48 MHz → TIM3 saati = 96 MHz (x2)
        └─ APB2 /1 → PCLK2 = 96 MHz → TIM1 saati = 96 MHz (x1)
-
-  PLLQ = 4 → USB OTG FS = 192/4 = 48 MHz ✓
-  Neden 96 MHz? USB Full-Speed 48 MHz kesin gereksinim.
-  PLLN=200 → VCO=200 → USB=50 MHz → USB çalışmaz.
-  PLLN=192 → VCO=192 → USB=48 MHz → USB çalışır.
 ```
 
 ## TIM1 PWM Yapısı

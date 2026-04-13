@@ -73,32 +73,39 @@
 
 ## Açık Sorunlar
 
-### 24. [LOW] IWDG Watchdog Timer Eksik
-**Sorun:** ISR veya main loop takılırsa motor açık kalabilir. HardFault handler var ama hangup durumunda koruma yok.
+### 25. ~~[LOW] IWDG Watchdog Timer Eksik~~ ✅ Düzeltildi (2026-04-13)
+**Durum:** IWDG aktif. `BoardIO_InitWatchdog()` + `BoardIO_KickWatchdog()` eklendi.
+**Konfig:** `IWDG_TIMEOUT_MS=500` (motor_config.h).
+**Besleme:** main loop içinde watchdog refresh var.
 
-### 25. [LOW] Undervoltage ve Termal Koruma Eksik
-**Dosya:** `include/motor_config.h:237-238`
-**Sorun:** VSENSE ADC'den okunuyor ama koruma yapılmıyor. NTC termal koruma henüz eklenmemiş.
+### 26. [LOW] Undervoltage Kalibrasyonu Eksik
+**Dosya:** `src/protection.c`, `include/motor_config.h`
+**Durum:** Undervoltage fault kodu eklendi (`Prot_CheckUndervoltage`) ve CLI'dan runtime ayarlanabiliyor (`uv`, `uven`). Ancak eşikler ilk değer, bench kalibrasyonu gerekli.
 
-### 26. [LOW] VSENSE Bölücü Oranı Teorik
+### 27. [LOW] VSENSE Bölücü Oranı Teorik
 **Dosya:** `include/motor_config.h:198`
-**Sorun:** `VSENSE_DIVIDER_RATIO = 0.04472f` teorik, bench'te doğrulanmamış.
+**Sorun:** `VSENSE_DIVIDER_RATIO = 0.04472f` teorik kabul ile kullanılıyor; undervoltage eşiği doğruluğu buna bağlı.
 
-### 27. [LOW] Dead-Time State Geçişi Kaba (Slew All-Off)
+### 28. [LOW] Dead-Time State Geçişi Kaba (Slew All-Off)
 **Dosya:** `src/main.c` — `MotorControl_Tick()`
 **Sorun:** Hall değişimi algılandığında bir tam ISR periyodu (~80 us) all-off. Güvenli ama kaba. `docs/control_strategy.md`'de belgelendi.
 
-### 28. [LOW] Deadtime Yeterliliği Doğrulanmadı
+### 29. [LOW] Deadtime Yeterliliği Doğrulanmadı
 **Hesap:** ~521 ns MCU + ~300-400 ns L6388 dahili = ~820-920 ns
 **Çözüm:** Osiloskopla PA8/PA7 çiftinde cross-conduction kontrolü.
 
 ## Donanım Bilgileri
 
-### 29. MOSFET: IRFB7730 — Doğrulandı
+### 30. MOSFET: IRFB7730 — Doğrulandı
 **Part:** IRFB7730, Vds(max)=75V, Rds(on)=3.1mΩ, Qg=137nC, Id=120A
 
-### 30. INA181A1 — Gain Doğrulandı
+### 31. INA181A1 — Gain Doğrulandı
 **Part:** INA181A1QDBVRQ1, Gain=20 V/V
 
-### 31. VSENSE Bölücü Oranı Doğrulandı
+### 32. VSENSE Bölücü Oranı Doğrulandı
 **Değer:** `VSENSE_DIVIDER_RATIO = 0.04472f` — R_top=47k, R_bot=2.2k
+
+### 35. ~~[LOW] Clock/UART Yorum Drift~~ ✅ Düzeltildi (2026-04-13)
+**Dosya:** `platformio.ini`, `src/board_io.c`, `include/cli.h`
+**Sorun:** Saat ve transport açıklamalarında güncel kodla uyumsuz yorumlar vardı.
+**Durum:** Yorumlar güncel çalışma moduna (UART, 96 MHz) hizalandı.

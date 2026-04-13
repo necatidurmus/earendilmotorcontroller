@@ -29,28 +29,11 @@
 #include "stm32f4xx_hal.h"
 
 /* ====================================================================
- * 0. CLI Transport Seçimi
+ * 0. CLI Transport
  *
- * CLI_TRANSPORT_UART : USART2 PA2(TX)/PA3(RX), 115200 baud
- *                      Herhangi bir USB-UART köprü veya ST-Link VCP ile çalışır.
- *                      PA9/PA10 TIM1 PWM ile çakışır, bu yüzden USART2 kullanılır.
- *
- * CLI_TRANSPORT_CDC  : USB Full-Speed CDC (PA11 D-, PA12 D+)
- *                      PC'de sanal seri port olarak görünür. Driver gerekmez
- *                      (Windows 10+, Linux, macOS).
- *                      UART kablosu gerekmez — doğrudan USB ile bağlan.
- *
- *                      ÖNEMLİ: CDC seçildiğinde SYSCLK 100→96 MHz olur.
- *                      USB için VCO/PLLQ = 48 MHz şartı var.
- *                      PLLN: 200→192, PLLQ=4 → 192/4 = 48 MHz USB ✓
- *                      Tüm timer hesapları bu saate göre güncellendi.
- *
- * Değiştirmek için sadece bu satırı düzenle:
+ * UART-only: USART2 PA2(TX)/PA3(RX), 115200 baud
+ * PA9/PA10 TIM1 PWM ile çakıştığı için USART2 kullanılır.
  * ==================================================================== */
-#define CLI_TRANSPORT_UART   0
-#define CLI_TRANSPORT_CDC    1
-
-#define CLI_TRANSPORT        CLI_TRANSPORT_UART   /* ← buraya CDC veya UART yaz */
 
 /* ====================================================================
  * 1. Board pin mapping — CONFIRMED from working Arduino firmware
@@ -198,6 +181,10 @@
 #define VSENSE_DIVIDER_RATIO 0.04472f   /* R_top=47k, R_bot=2.2k -> 2.2/(47+2.2) */
 #define VSENSE_VREF          3.3f
 
+/* VSENSE çevirim yardımcıları */
+#define VSENSE_MV_TO_ADC(mv) ((uint16_t)(((((float)(mv)) / 1000.0f) * VSENSE_DIVIDER_RATIO * ADC_MAX_COUNTS / VSENSE_VREF) + 0.5f))
+#define VSENSE_ADC_TO_V(vraw) ((((float)(vraw)) * VSENSE_VREF / ADC_MAX_COUNTS) / VSENSE_DIVIDER_RATIO)
+
 /* ====================================================================
  * 5. Görev döngüsü ve rampa — [AYAR]
  * ==================================================================== */
@@ -234,8 +221,14 @@
 
 #define FAULT_REASON_MAX    48
 
-/* TODO: VSENSE ölçeği doğrulandığında undervoltage eşiği ekle */
-/* TODO: NTC eklenirse thermal limit ekle */
+/* IWDG timeout (LSI~32 kHz, prescaler=32 => ~1 ms/count) */
+#define IWDG_TIMEOUT_MS     500U
+
+/* Undervoltage protection — [AYAR] (ilk eşikler, bench'te kalibre edilmeli) */
+#define UNDERVOLTAGE_PROTECTION_ENABLE  1U
+#define UNDERVOLTAGE_LIMIT_MV           9000U
+#define UNDERVOLTAGE_HYSTERESIS_MV      500U
+#define UNDERVOLTAGE_STRIKES            8U
 
 /* ====================================================================
  * 8. CLI / seri iletişim — [TASARIM]
@@ -245,17 +238,8 @@
 #define CLI_LINE_BUF         96
 #define CLI_IDLE_PARSE_MS    120U       /* newline gelmezse otomatik parse */
 
-/*
- * UART transport sabitleri (CLI_TRANSPORT == CLI_TRANSPORT_UART iken geçerli)
- * CDC seçildiğinde bu değerler devre dışıdır.
- */
+/* UART transport sabitleri */
 #define CLI_UART_HANDLE      huart2  /* USART2 — PA2(TX)/PA3(RX) */
-
-/*
- * USB CDC transport sabitleri (CLI_TRANSPORT == CLI_TRANSPORT_CDC iken geçerli)
- * CDC RX tampon boyutu: circular buffer, USB paket boyutunun katı olmalı
- */
-#define USB_CDC_RX_BUF_SIZE  256U    /* circular RX tampon boyutu (2^n olsun) */
 
 /* ====================================================================
  * 9. Hall harita profilleri — [TASARIM] (çalışan firmware'den)
@@ -288,13 +272,7 @@ extern "C" {
 extern TIM_HandleTypeDef  htim1;    /* PWM timer */
 extern TIM_HandleTypeDef  htim3;    /* control timer */
 extern ADC_HandleTypeDef  hadc1;    /* current/voltage sense */
-extern UART_HandleTypeDef huart2;   /* CLI UART — USART2 PA2/PA3 (sadece UART modda) */
-
-#if CLI_TRANSPORT == CLI_TRANSPORT_CDC
-/* USB CDC modda tanımlı — usb_device.c içinde */
-#include "stm32f4xx_hal_pcd.h"
-extern PCD_HandleTypeDef hpcd_USB_OTG_FS;
-#endif
+extern UART_HandleTypeDef huart2;   /* CLI UART — USART2 PA2/PA3 */
 
 #ifdef __cplusplus
 }

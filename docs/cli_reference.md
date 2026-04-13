@@ -58,10 +58,11 @@ Mode: FORWARD
 Duty cmd=50 applied=48
 Hall prof=0 mask=0 offset=0
 Limits soft=450 hard=700
+UV en=1 lim_mV=9000 hyst_mV=500 strikes=8
 Fault: none
 ISR ticks: 125000
 Hall raw=010 corr=010 map=2 acc=2 drv=2
-I raw=2048 filt=2049 off=2041 dlt=8 estA=0.13 V raw=1820
+I raw=2048 filt=2049 off=2041 dlt=8 estA=0.13 V est=24.31 raw=1820 uvStrikes=0
 Comm state=2 pwm=627
 =======================
 ```
@@ -72,11 +73,12 @@ Comm state=2 pwm=627
 | Duty cmd/applied | Komut ve gerçekleşen duty |
 | Hall prof/mask/offset | Hall konfigürasyonu |
 | Limits soft/hard | ADC delta koruma eşikleri |
+| UV en/lim/hyst/strikes | Undervoltage koruma ayarları |
 | Fault | Fault durumu ve nedeni |
 | ISR ticks | Toplam ISR çalışma sayısı |
 | Hall raw/corr/map/acc/drv | Hall işleme zinciri anlık görüntüsü |
 | I raw/filt/off/dlt/estA | Akım ölçüm zinciri |
-| V raw | VSENSE ham ADC |
+| V est/raw/uvStrikes | VSENSE tahmini voltaj, ham ADC, UV strike sayısı |
 | Comm state/pwm | Aktif komütasyon durumu ve timer CCR değeri |
 
 ### `hall`
@@ -100,7 +102,7 @@ Motoru elle döndürürken `drv` alanının 0→1→2→3→4→5→0 veya tersi
 Yalnızca akım snapshot.
 
 ```
-I raw=2048 filt=2049 off=2041 dlt=8 estA=0.13 soft=off strikes=0 | V raw=1820
+I raw=2048 filt=2049 off=2041 dlt=8 estA=0.13 soft=off strikes=0 uv=0 | V est=24.31 raw=1820
 ```
 
 | Alan | Açıklama |
@@ -112,7 +114,8 @@ I raw=2048 filt=2049 off=2041 dlt=8 estA=0.13 soft=off strikes=0 | V raw=1820
 | `estA` | Tahmini amper — INA181A1 (gain=20 V/V) ile hesaplanır |
 | `soft` | Soft limit aktif mi (ACT / off) |
 | `strikes` | Ardışık hard limit aşım sayısı (0'dan 3'e ulaşınca fault) |
-| `V raw` | VSENSE ham ADC (bölücü oranı=0.04472, R_top=47k, R_bot=2.2k) |
+| `uv` | Ardışık undervoltage strike sayısı |
+| `V est/raw` | VSENSE tahmini voltaj ve ham ADC |
 
 ---
 
@@ -191,6 +194,25 @@ PCB üzerindeki INA181 suffix'i okunduğunda:
 - A4 → `gain 200`
 
 **Koruma kararlarını etkilemez** — yalnızca `estA` hesaplamasını etkiler.
+
+### `uv <limit_mV> <hyst_mV> <strikes>`
+Undervoltage eşiğini runtime günceller.
+
+```
+uv 9000 500 8
+```
+
+- `limit_mV`: alt voltaj eşiği (1000..60000)
+- `hyst_mV`: bırakma histerezisi (0..5000)
+- `strikes`: latch için ardışık düşük voltaj sayısı (1..50)
+
+### `uven <0|1>`
+Undervoltage fault kontrolünü aç/kapatır.
+
+```
+uven 1
+uven 0
+```
 
 ### `zeroi`
 Akım sensörü sıfır ofset kalibrasyonu.

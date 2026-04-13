@@ -36,6 +36,8 @@ void BoardIO_InitControlTimer(void);
 void BoardIO_StartControlTimer(void);
 void BoardIO_InitADC(void);
 void BoardIO_InitUART(void);
+void BoardIO_InitWatchdog(void);
+void BoardIO_KickWatchdog(void);
 
 /* PWM duty kontrolü — duty 0..PWM_PERIOD_COUNTS aralığında */
 void BoardIO_SetPWMA(uint16_t duty);

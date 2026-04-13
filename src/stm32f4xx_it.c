@@ -11,7 +11,7 @@
 #include "stm32f4xx_it.h"
 #include "motor_config.h"
 
-/* External HAL handle — defined in board_io.c */
+/* External HAL handles */
 extern TIM_HandleTypeDef htim3;
 
 /* Motor control tick — implemented in main.c */
