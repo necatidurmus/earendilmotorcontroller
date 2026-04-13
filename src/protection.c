@@ -36,6 +36,7 @@ static uint16_t voltageRaw = 0;
 static float    currentFiltered = 0.0f;
 static uint16_t currentOffset = 0;
 static uint16_t currentDelta = 0;
+static bool     filterInitialized = false;
 
 /* Protection state */
 static volatile bool     softLimitActive = false;
@@ -68,6 +69,7 @@ void Prot_Init(const ProtectionConfig *cfg) {
     currentFiltered = 0.0f;
     currentOffset = 0;
     currentDelta = 0;
+    filterInitialized = false;
     softLimitActive = false;
     hardStrikes = 0;
     faultLatched = false;
@@ -85,8 +87,9 @@ void Prot_SampleTick(void) {
     voltageRaw = BoardIO_ReadADC(VSENSE_ADC_CHANNEL);
 
     /* EMA filter */
-    if (currentFiltered < 1.0f) {
+    if (!filterInitialized) {
         currentFiltered = (float)currentRaw;
+        filterInitialized = true;
     } else {
         currentFiltered += ((float)currentRaw - currentFiltered) * CURRENT_FILTER_ALPHA;
     }
@@ -166,6 +169,7 @@ void Prot_CalibrateOffset(void) {
     currentOffset = (uint16_t)(sum / ADC_CALIBRATION_SAMPLES);
     currentFiltered = (float)currentOffset;
     currentDelta = 0;
+    filterInitialized = true;
 }
 
 void Prot_LatchFault(const char *reason) {

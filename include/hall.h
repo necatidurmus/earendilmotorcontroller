@@ -54,12 +54,12 @@ uint8_t Hall_ResolveState(uint32_t nowUs);
 
 /*
  * Get the resolved drive state (after applying direction).
- * Call after Hall_ResolveState().
+ * Diagnostic only — not used by ISR commutation (Comm_ApplyStep handles direction).
  * Returns 0..5 or 255.
  */
 uint8_t Hall_GetDriveState(void);
 
-/* Set motor direction: 0=forward (state as-is), 1=backward (state+3) */
+/* Set motor direction: forward=1 (driveDirection=0, state as-is), forward=0 (driveDirection=1, state+3) */
 void Hall_SetDirection(uint8_t forward);
 
 /* Take a diagnostic snapshot for CLI printing (non-ISR safe) */

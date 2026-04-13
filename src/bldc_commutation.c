@@ -48,6 +48,9 @@
 #define CCER_CH3E   (1U << 8)
 #define CCER_CH3NE  (1U << 10)
 
+/* Mask of all commutation channel bits — safe read-modify-write */
+#define CCER_COMM_MASK (CCER_CH1E | CCER_CH1NE | CCER_CH2E | CCER_CH2NE | CCER_CH3E | CCER_CH3NE)
+
 /*
  * Her komütasyon adımı için precomputed CCER değerleri.
  * ISR içinde lookup tablosu olarak kullanılır — dal yok, hesaplama yok.
@@ -129,10 +132,10 @@ void Comm_ApplyStep(uint8_t state, uint16_t duty, RunMode dir) {
 
     if (dir == RUN_FORWARD) {
         *CCR_FWD_PTR[state] = duty;
-        TIM1->CCER = CCER_FWD[state];
+        TIM1->CCER = (TIM1->CCER & ~CCER_COMM_MASK) | CCER_FWD[state];
     } else {
         *CCR_BWD_PTR[state] = duty;
-        TIM1->CCER = CCER_BWD[state];
+        TIM1->CCER = (TIM1->CCER & ~CCER_COMM_MASK) | CCER_BWD[state];
     }
 
     activeState = state;

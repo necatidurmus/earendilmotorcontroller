@@ -75,7 +75,7 @@ void MotorControl_Tick(void) {
     }
 
     /* 4) Hall → komütasyon durumuna çözümleme */
-    uint32_t nowUs    = g_isrTickCount * 80U;  /* 80 µs/tick @ 12.5 kHz */
+    uint32_t nowUs    = (uint32_t)((uint64_t)g_isrTickCount * 80U);  /* 64-bit multiply to avoid ~72 min overflow */
     uint8_t  baseState = Hall_ResolveState(nowUs);
     if (baseState > 5) {
         /* Geçersiz hall — güvenli çıkış */
