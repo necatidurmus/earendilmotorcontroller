@@ -45,10 +45,13 @@ void BoardIO_SetPWMB(uint16_t duty);
 void BoardIO_SetPWMC(uint16_t duty);
 void BoardIO_SetAllPWM(uint16_t a, uint16_t b, uint16_t c);
 
-/* Kısa yol: tüm çıkışlar kapalı (CCER sıfır + CCR sıfır) */
+/* Kısa yol: tüm çıkışlar kapalı (CCER sıfır + CCR sıfır + MOE kapalı) */
 void BoardIO_AllOff(void);
 
-/* ADC blocking okuma — register-level EOC polling, ISR-safe */
+/* TIM1 ana çıkış iznini (MOE) tekrar aç — clear/re-arm sonrası kullan */
+void BoardIO_RearmPWMOutputs(void);
+
+/* ADC DMA tamponundan son örneği oku — non-blocking, ISR-safe */
 uint16_t BoardIO_ReadADC(uint32_t channel);
 
 /* LED */

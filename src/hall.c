@@ -173,6 +173,7 @@ uint8_t Hall_GetDriveState(void) {
 }
 
 void Hall_GetSnapshot(HallSnapshot *snap) {
+    Hall_GetDriveState();
     snap->raw = lastRaw;
     snap->corrected = lastCorrected;
     snap->mapped = lastMapped;

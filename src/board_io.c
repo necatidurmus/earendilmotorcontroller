@@ -30,7 +30,9 @@ TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim3;
 ADC_HandleTypeDef hadc1;
 UART_HandleTypeDef huart2;
+static DMA_HandleTypeDef hdma_adc1;
 static IWDG_HandleTypeDef hiwdg;
+static volatile uint16_t adcDmaBuf[2] = {0U, 0U};
 
 /* ====================================================================
  * DWT mikrosaniye zamanlayıcısı
@@ -175,6 +177,17 @@ void BoardIO_InitPWM(void) {
     gpio.Pin = BL_PIN | CL_PIN;  /* PB0 | PB1 */
     HAL_GPIO_Init(BL_PORT, &gpio);
 
+#if TIM1_BREAK_ENABLE
+    /* TIM1 BKIN (örn. PB12) — donanımsal hızlı kapatma girişi */
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+    gpio.Pin = TIM1_BREAK_PIN;
+    gpio.Mode = GPIO_MODE_AF_PP;
+    gpio.Pull = (TIM1_BREAK_ACTIVE_HIGH != 0U) ? GPIO_PULLDOWN : GPIO_PULLUP;
+    gpio.Speed = GPIO_SPEED_FREQ_HIGH;
+    gpio.Alternate = TIM1_BREAK_AF;
+    HAL_GPIO_Init(TIM1_BREAK_PORT, &gpio);
+#endif
+
     /* TIM1 zaman tabanı */
     htim1.Instance               = TIM1;
     htim1.Init.Prescaler         = 0;                 /* PSC=0 → sayım=TIM1 clock=96 MHz */
@@ -218,8 +231,8 @@ void BoardIO_InitPWM(void) {
      *   Hardware deadtime. CH HIGH'a geçerken CHN'nin önce kapanmasını bekler
      *   ve tersinde de aynı. Shoot-through'ya karşı primer donanım koruması.
      *
-     * BreakState=DISABLE: Harici break girişi kullanılmıyor (üzeri LOK).
-     *   İleride OCP sinyali gelirse aktif edilebilir.
+     * BreakState: TIM1_BREAK_ENABLE ile koşullu açılır.
+     *   BKIN aktifken donanım çıkışları hızlıca kapatır.
      *
      * AutomaticOutput=DISABLE: MOE biti yazılımdan kontrol edilir,
      *   break sonrası otomatik açılmaz.
@@ -229,8 +242,13 @@ void BoardIO_InitPWM(void) {
     bdtr.OffStateIDLEMode = TIM_OSSI_ENABLE;          /* dururken de idle geçerli */
     bdtr.LockLevel        = TIM_LOCKLEVEL_OFF;
     bdtr.DeadTime         = DEADTIME_COUNTS;          /* 50 → 500 ns */
+#if TIM1_BREAK_ENABLE
+    bdtr.BreakState       = TIM_BREAK_ENABLE;
+    bdtr.BreakPolarity    = (TIM1_BREAK_ACTIVE_HIGH != 0U) ? TIM_BREAKPOLARITY_HIGH : TIM_BREAKPOLARITY_LOW;
+#else
     bdtr.BreakState       = TIM_BREAK_DISABLE;
     bdtr.BreakPolarity    = TIM_BREAKPOLARITY_HIGH;
+#endif
     bdtr.AutomaticOutput  = TIM_AUTOMATICOUTPUT_DISABLE;
 
     if (HAL_TIMEx_ConfigBreakDeadTime(&htim1, &bdtr) != HAL_OK) {
@@ -257,10 +275,8 @@ void BoardIO_InitPWM(void) {
     TIM1->CCR3 = 0;
     TIM1->CCER = 0;
 
-    /* MOE (Main Output Enable) must be set for complementary outputs to work */
-    if (!(TIM1->BDTR & TIM_BDTR_MOE)) {
-        while (1);  /* MOE not set — configuration error */
-    }
+    /* Güvenli başlangıç: çıkışlar kapalı, re-arm ile açılır */
+    TIM1->BDTR &= ~TIM_BDTR_MOE;
 }
 
 /* ====================================================================
@@ -299,13 +315,13 @@ void BoardIO_StartControlTimer(void) {
  * ADC1 Başlatma — ISENSE (PA0/IN0) ve VSENSE (PA4/IN4)
  *
  * ADC saati: PCLK2/4 = 96/4 = 24 MHz (maks 36 MHz sınırının altında)
- * BoardIO_ReadADC ISR içinden decimation ile çağrılır (register-level EOC polling).
- * Her okuma ≈ (84+12)/24MHz ≈ 4 us.
- * ADC_DECIMATION=4 → ortalama ~0.5-1 us/tick ISR yükü.
+ * ADC sürekli scan + DMA circular ile arka planda akar.
+ * ISR tarafı sadece son örnekleri DMA tamponundan okur (non-blocking).
  * ==================================================================== */
 
 void BoardIO_InitADC(void) {
     __HAL_RCC_ADC1_CLK_ENABLE();
+    __HAL_RCC_DMA2_CLK_ENABLE();
 
     /* PA0 ve PA4 analog mod */
     GPIO_InitTypeDef gpio = {0};
@@ -316,12 +332,30 @@ void BoardIO_InitADC(void) {
 
     hadc1.Instance                   = ADC1;
     hadc1.Init.Resolution            = ADC_RESOLUTION_12B;
-    hadc1.Init.ScanConvMode          = DISABLE;         /* tek kanal */
-    hadc1.Init.ContinuousConvMode    = DISABLE;         /* tek dönüşüm */
+    hadc1.Init.ScanConvMode          = ENABLE;          /* 2 kanal */
+    hadc1.Init.ContinuousConvMode    = ENABLE;          /* sürekli */
     hadc1.Init.DiscontinuousConvMode = DISABLE;
     hadc1.Init.ExternalTrigConv      = ADC_SOFTWARE_START;
     hadc1.Init.DataAlign             = ADC_DATAALIGN_RIGHT;
-    hadc1.Init.NbrOfConversion       = 1;
+    hadc1.Init.NbrOfConversion       = 2;
+    hadc1.Init.DMAContinuousRequests = ENABLE;
+
+    hdma_adc1.Instance                 = DMA2_Stream0;
+    hdma_adc1.Init.Channel             = DMA_CHANNEL_0;
+    hdma_adc1.Init.Direction           = DMA_PERIPH_TO_MEMORY;
+    hdma_adc1.Init.PeriphInc           = DMA_PINC_DISABLE;
+    hdma_adc1.Init.MemInc              = DMA_MINC_ENABLE;
+    hdma_adc1.Init.PeriphDataAlignment = DMA_PDATAALIGN_HALFWORD;
+    hdma_adc1.Init.MemDataAlignment    = DMA_MDATAALIGN_HALFWORD;
+    hdma_adc1.Init.Mode                = DMA_CIRCULAR;
+    hdma_adc1.Init.Priority            = DMA_PRIORITY_HIGH;
+    hdma_adc1.Init.FIFOMode            = DMA_FIFOMODE_DISABLE;
+
+    if (HAL_DMA_Init(&hdma_adc1) != HAL_OK) {
+        while (1);
+    }
+
+    __HAL_LINKDMA(&hadc1, DMA_Handle, hdma_adc1);
 
     if (HAL_ADC_Init(&hadc1) != HAL_OK) {
         while (1);
@@ -329,35 +363,37 @@ void BoardIO_InitADC(void) {
 
     /* ADC ön bölücü: PCLK2/4 = 24 MHz */
     ADC1_COMMON->CCR = ADC_CCR_ADCPRE_0;  /* 01 = /4 */
-}
 
-/* Blocking tek kanal ADC okuma — register-level EOC polling
- * HAL_ADC_PollForConversion yerine doğrudan SR->EOC bayrağı okunur,
- * böylece ISR içinde HAL timeout/mutex overhead'i ortadan kalkar.
- * Kanal yeniden yapılandırma sadece değişirse yapılır. */
-uint16_t BoardIO_ReadADC(uint32_t channel) {
-    static uint32_t lastChannel = 0xFFFFFFFF;
-
-    if (channel != lastChannel) {
+    {
         ADC_ChannelConfTypeDef cfg = {0};
-        cfg.Channel      = channel;
+        cfg.Channel      = ISENSE_ADC_CHANNEL;
         cfg.Rank         = 1;
         cfg.SamplingTime = ADC_SAMPLETIME_84CYCLES;
-        HAL_ADC_ConfigChannel(&hadc1, &cfg);
-        lastChannel = channel;
-    }
+        if (HAL_ADC_ConfigChannel(&hadc1, &cfg) != HAL_OK) {
+            while (1);
+        }
 
-    hadc1.Instance->CR2 |= ADC_CR2_SWSTART;
-
-    /* EOC polling — ~96 döngü (4.00 us @ 24 MHz ADC clock), timeout at ~10 us */
-    {
-        uint32_t timeout = 1000;
-        while (!(hadc1.Instance->SR & ADC_SR_EOC)) {
-            if (--timeout == 0) return 0;  /* ADC stuck — return safe value */
+        cfg.Channel = VSENSE_ADC_CHANNEL;
+        cfg.Rank    = 2;
+        if (HAL_ADC_ConfigChannel(&hadc1, &cfg) != HAL_OK) {
+            while (1);
         }
     }
 
-    return (uint16_t)hadc1.Instance->DR;
+    if (HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adcDmaBuf, 2) != HAL_OK) {
+        while (1);
+    }
+}
+
+/* DMA-backed son örnek okuma — ISR-safe ve non-blocking */
+uint16_t BoardIO_ReadADC(uint32_t channel) {
+    if (channel == ISENSE_ADC_CHANNEL) {
+        return adcDmaBuf[0];
+    }
+    if (channel == VSENSE_ADC_CHANNEL) {
+        return adcDmaBuf[1];
+    }
+    return 0;
 }
 
 /* ====================================================================
@@ -447,7 +483,7 @@ void BoardIO_SetAllPWM(uint16_t a, uint16_t b, uint16_t c) {
 
 /*
  * Tüm çıkışları kapat — güvenli durum.
- * CCR=0 (duty %0), CCER=0 (tüm kanallar devre dışı).
+ * CCR=0 (duty %0), CCER=0 (tüm kanallar devre dışı), MOE=0.
  * OSSR=1 ve idle state=0 olduğu için pinler LOW'da kalır
  * → L6388 INH=0, INL=0 → yüksek ve düşük taraf MOSFET'ler kapalı.
  */
@@ -456,6 +492,11 @@ void BoardIO_AllOff(void) {
     TIM1->CCR2 = 0;
     TIM1->CCR3 = 0;
     TIM1->CCER = 0;
+    TIM1->BDTR &= ~TIM_BDTR_MOE;
+}
+
+void BoardIO_RearmPWMOutputs(void) {
+    TIM1->BDTR |= TIM_BDTR_MOE;
 }
 
 /* ====================================================================

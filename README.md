@@ -1,12 +1,12 @@
 # Earendil BLDC Motor Kontrolcüsü
 
-STM32F411 Black Pill tabanlı, L6388 gate driver, hall sensörlü, senkron komplementer PWM BLDC motor firmware projesi.
+STM32F411 Black Pill tabanlı, L6388 gate driver, hall sensörlü, 6-adım CH/CHN tabanlı senkron iletim BLDC motor firmware projesi.
 
 ---
 
 ## 1. Proje Özeti
 
-Sensörlü 6-adım (6-step) trapezoidal komütasyon yapısı kullanan, STM32Cube HAL tabanlı, modüler ve belgelenmiş bir BLDC motor sürücü firmware'idir. Arduino bağımlılığı yoktur. Motor kontrol hot path yalnızca register seviyesinde çalışır.
+Sensörlü 6-adım (6-step) trapezoidal komütasyon yapısı kullanan, STM32Cube HAL tabanlı, modüler ve belgelenmiş bir BLDC motor sürücü firmware'idir. Arduino bağımlılığı yoktur. Motor kontrol hot path register-seviyesi CCR/CCER yönetimi ile çalışır.
 
 ---
 
@@ -74,7 +74,7 @@ earendilmotorcontroller/
 └── src/
     ├── main.c               Giriş noktası, ISR çağrısı, ana döngü
     ├── board_io.c           TIM1/TIM3/ADC/UART/GPIO başlatma
-    ├── bldc_commutation.c   6-adım senkron komplementer komütasyon
+     ├── bldc_commutation.c   6-adım CH/CHN tabanlı senkron iletim komütasyonu
     ├── hall.c               Hall okuma, majority vote, debounce
     ├── protection.c         EMA, soft/hard limit, fault latch
     ├── cli.c                UART2 CLI, komut dispatcher
@@ -89,7 +89,7 @@ earendilmotorcontroller/
 |---|---|
 | `motor_config.h` | Tüm pin, timer, ADC, koruma sabitleri. Değiştirme noktası. |
 | `board_io.c` | TIM1 komplementer PWM + deadtime, GPIO, ADC, UART başlatma. |
-| `bldc_commutation.c` | 6 adım × 2 yön CCER lookup tablosu. ISR hot path. |
+| `bldc_commutation.c` | 6 adım × 2 yön CCER lookup tablosu (aktif faz çifti sürüşü). ISR hot path. |
 | `hall.c` | 7× majority vote, debounce, geçersiz hall hold. |
 | `protection.c` | EMA filtreli akım, soft/hard limit, fault latch, slew. |
 | `cli.c` | Non-blocking UART2 CLI, 15+ komut. |
@@ -117,16 +117,16 @@ earendilmotorcontroller/
 
 ---
 
-## 7. Senkron Komplementer PWM
+## 7. Uygulanan Sürüş Modeli
 
 ### Asenkron (önceki) yöntem
 - Yüksek taraf: TIM1 PWM
 - Düşük taraf: GPIO sabit HIGH
 - Deadtime: yazılımda, bir ISR periyodu all-off
 
-### Senkron Komplementer (mevcut) yöntem
+### Mevcut yöntem (CH/CHN tabanlı senkron iletim)
 - Yüksek taraf: TIM1_CHx — PWM sinyali
-- Düşük taraf: TIM1_CHxN — komplementer (otomatik ters + donanım deadtime)
+- Karşı faz düşük taraf: TIM1_CHxN — senkron iletim
 - Deadtime: BDTR.DTG = 50 → 500 ns MCU + ~300-400 ns L6388 dahili = ~800-900 ns toplam
 
 ### Bu projede nasıl uygulandı
@@ -139,9 +139,13 @@ Adım 1: A↑ C↓ → CCER = CH1E | CH3NE
 ...
 ```
 
-Komütasyon adımı başına yalnızca 4 register yazımı yapılır: CCR1/2/3 sıfırlama + aktif CCR + CCER.
+Komütasyonda sektör/yön değiştiğinde CCR/CCER güncellenir, aynı sektörde yalnızca aktif CCR duty güncellenir.
 
-### L6388 ile gerçekçi tablo
+### Sınır ve doğru terminoloji
+
+Bu yapı "aktif faz çifti + CH/CHN" sürüşüdür. Donanım deadtime ve düşük taraf zamanlaması timer ile yönetilir; ancak her adımda yalnızca bir yüksek + bir düşük faz aktif tutulur. Bu nedenle metinlerde "tam üç-faz complementary PWM" iddiası yerine bu model kullanılmalıdır.
+
+### L6388 ile pratik not
 
 L6388 ayrı INH ve INL girişlerine sahiptir. TIM1_CHx → INH, TIM1_CHxN → INL. Bu pin routing textbook complementary PWM için idealdir. Shoot-through donanım tarafından önlenir.
 
@@ -167,7 +171,7 @@ L6388 ayrı INH ve INL girişlerine sahiptir. TIM1_CHx → INH, TIM1_CHxN → IN
 | Hard limit | ADC delta > `CURRENT_HARD_LIMIT` ardı ardına 3 kez → fault latch |
 | Fault latch | Çıkışlar kapalı, mod STOPPED, 'clear' olmadan tekrar çalışmaz |
 | Geçersiz hall | Çıkışlar hemen kapalı |
-| Undervoltage | **TODO** — VSENSE ölçeği doğrulanmadan eklenmedi |
+| Undervoltage | VSENSE tabanlı fault koruması mevcut (CLI ile ayarlanabilir) |
 
 ---
 
@@ -217,6 +221,8 @@ pio device monitor --baud 115200
 | `clear` | Fault temizle |
 | `help` | Yardım |
 
+Not: `hinv/hmask/offset/map/limits/uv/uven/gain/zeroi` komutları yalnızca `STOPPED` modunda kabul edilir. `clear` için `STOPPED` + `pwm 0` şarttır.
+
 ---
 
 ## 13. İlk Bench Test Sırası
@@ -229,7 +235,7 @@ pio device monitor --baud 115200
 6. **Motoru elle döndür** → `hall` komutuyla hall geçişlerini gör
 7. **`pwm 10`** → düşük duty ayarla
 8. **`forward`** → motor kıpırdamalı
-9. Osiloskopla PA8/PA7 çiftini gör — komplementer dalga + deadtime
+9. Osiloskopla PA8/PA7 çiftini gör — CH/CHN faz çifti + deadtime
 10. Duty yavaş artır: `pwm 20`, `pwm 30`, ...
 11. `status` ile akım takip et
 12. `stop` ile durdur
@@ -252,9 +258,7 @@ pio device monitor --baud 115200
 ## 15. Gelecek Geliştirmeler
 
 - [ ] Phase 1: Konfigürasyon kalibrasyonu (hall, akım, duty, ramp)
-- [ ] TIM1 Break girişine OCP bağlantısı (donanım overcurrent trip)
-- [ ] DMA veya timer-triggered ADC (blocking ADC → ISR yükü azalt)
-- [ ] Undervoltage koruması (VSENSE doğrulandığında)
-- [ ] IWDG watchdog timer
+- [ ] TIM1 Break girişine harici OCP bağlantısını doğrula (BKIN opsiyonel, firmware hazır)
+- [ ] ADC örneklemeyi timer-triggered senkron moda taşı (şu an continuous DMA)
 - [ ] RPM / hız geri bildirimi (hall geçiş süresi → RPM)
 - [ ] Closed-loop PI hız kontrolü
