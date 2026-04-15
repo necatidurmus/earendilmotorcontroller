@@ -56,34 +56,39 @@ void MotorControl_Tick(void) {
     /* 1) ADC örnekleme (içeride decimation ile) */
     Prot_SampleTick();
 
-    /* 2) Hard overcurrent kontrolü */
-    if (Prot_CheckHardLimit()) {
-        /* Fault latched oldu — çıkışlar zaten kapalı (Prot_LatchFault içinde) */
-        g_runMode    = RUN_STOPPED;
-        g_appliedDuty = 0;
-        return;
-    }
+    /* 1.05) Hall snapshot'u her tick güncel tut
+     * STOPPED modda da CLI 'hall' çıktısı canlı kalmalı.
+     */
+    uint32_t nowUs = (uint32_t)((uint64_t)g_isrTickCount * 80U);
+    uint8_t  baseState = Hall_ResolveState(nowUs);
 
-    /* 2.1) Undervoltage kontrolü */
-    if (Prot_CheckUndervoltage()) {
-        g_runMode = RUN_STOPPED;
-        g_appliedDuty = 0;
-        return;
-    }
-
-    /* 3) Durdurulmuş / fault / sıfır duty durumu */
+    /* 1.1) Motor komutu yokken koruma latch üretme
+     *      (özellikle bus yokken ISENSE zinciri false delta üretebilir).
+     */
     RunMode  mode    = (RunMode)g_runMode;
     uint16_t cmdDuty = g_commandDuty;
-
     if (mode == RUN_STOPPED || Prot_IsFaulted() || cmdDuty == 0) {
         g_appliedDuty = 0;
         Comm_AllOff();
         return;
     }
 
-    /* 4) Hall → komütasyon durumuna çözümleme */
-    uint32_t nowUs    = (uint32_t)((uint64_t)g_isrTickCount * 80U);  /* 64-bit multiply to avoid ~72 min overflow */
-    uint8_t  baseState = Hall_ResolveState(nowUs);
+    /* 2) Undervoltage kontrolü */
+    if (Prot_CheckUndervoltage()) {
+        /* Fault latched oldu — çıkışlar zaten kapalı (Prot_LatchFault içinde) */
+        g_runMode    = RUN_STOPPED;
+        g_appliedDuty = 0;
+        return;
+    }
+
+    /* 3) Hard overcurrent kontrolü */
+    if (Prot_CheckHardLimit()) {
+        g_runMode    = RUN_STOPPED;
+        g_appliedDuty = 0;
+        return;
+    }
+
+    /* 4) Hall durumu geçerli mi kontrol et */
     if (baseState > 5) {
         /* Geçersiz hall — güvenli çıkış */
         g_appliedDuty = 0;

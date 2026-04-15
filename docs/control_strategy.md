@@ -1,4 +1,4 @@
-# Kontrol Stratejisi: Senkron Komplementer PWM
+# Kontrol Stratejisi: 6-Step Aktif Faz Çifti Sürüşü
 
 ## Geleneksel Asenkron Sürüş
 

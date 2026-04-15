@@ -1,19 +1,19 @@
 /*
- * protection.c — Current sensing and overcurrent protection
+ * protection.c — Akım ölçümü ve aşırı akım koruması
  *
- * Architecture:
- *   - ADC sampling runs at decimated rate (every Nth ISR tick)
- *   - EMA filter smooths the raw ADC reading
- *   - Offset is calibrated at startup with outputs off
- *   - Delta = filtered - offset (how far above zero-current baseline)
- *   - Soft limit: proportional duty backoff when delta exceeds threshold
- *   - Hard limit: N consecutive over-threshold readings latch a fault
- *   - Fault latch: outputs off, mode stopped, requires explicit clear
- *   - Duty slew: limits rate of duty change per tick
+ * Mimari:
+ *   - ADC örnekleme seyreltilmiş hızda çalışır (her N. ISR tick'inde)
+ *   - EMA filtresi ham ADC okumasını yumuşatır
+ *   - Ofset başlangıçta çıkışlar kapalıyken kalibre edilir
+ *   - Delta = filtreli - ofset (sıfır akım tabanından ne kadar uzakta)
+ *   - Yumuşak limit: delta eşiği aşınca orantılı duty geri çekme
+ *   - Sert limit: N ardışık eşik aşımı fault latch'ler
+ *   - Fault latch: çıkışlar kapalı, mod durdu, açıkça temizlenmeli
+ *   - Duty slew: tick başına duty değişim hızını sınırlar
  *
- * IMPORTANT: "estimated amps" is DISPLAY ONLY. Protection operates on
- * raw ADC delta counts. Do not use estimated amps for safety decisions
- * because the INA181 gain is uncertain.
+ * ÖNEMLİ: "estimated amps" SADECE GÖSTERİMDİR. Koruma ham ADC delta
+ * sayıları üzerinden çalışır. INA181 kazancı belirsiz olduğu için
+ * estimated amps güvenlik kararlarında kullanılmamalıdır.
  */
 
 #include "protection.h"
@@ -22,7 +22,7 @@
 
 #include <string.h>
 
-/* Config */
+/* Konfigürasyon */
 static ProtectionConfig protCfg = {
     .softLimitAdc = CURRENT_SOFT_LIMIT,
     .hardLimitAdc = CURRENT_HARD_LIMIT,
@@ -36,27 +36,27 @@ static UndervoltageConfig uvCfg = {
     .strikesToTrip = UNDERVOLTAGE_STRIKES
 };
 
-/* ADC state */
-static uint8_t  adcDecimator = 0;
-static uint16_t currentRaw = 0;
-static uint16_t voltageRaw = 0;
-static float    currentFiltered = 0.0f;
-static uint16_t currentOffset = 0;
-static uint16_t currentDelta = 0;
-static bool     filterInitialized = false;
+/* ADC durumu */
+static volatile uint8_t  adcDecimator = 0;
+static volatile uint16_t currentRaw = 0;
+static volatile uint16_t voltageRaw = 0;
+static volatile float    currentFiltered = 0.0f;
+static volatile uint16_t currentOffset = 0;
+static volatile uint16_t currentDelta = 0;
+static volatile bool     filterInitialized = false;
 
-/* Protection state */
+/* Koruma durumu */
 static volatile bool     softLimitActive = false;
 static volatile uint8_t  hardStrikes = 0;
 static volatile uint8_t  undervoltageStrikes = 0;
 static volatile bool     faultLatched = false;
 static char              faultReason[FAULT_REASON_MAX] = "none";
 
-/* Display setting */
+/* Gösterim ayarı */
 static float    inaGain = INA_GAIN_DEFAULT;
 
 /* ====================================================================
- * Internal helpers
+ * İç yardımcı fonksiyonlar
  * ==================================================================== */
 
 static uint16_t clampU16(int32_t val) {
@@ -142,6 +142,17 @@ bool Prot_CheckHardLimit(void) {
     if (faultLatched) {
         return true;
     }
+
+#if UNDERVOLTAGE_PROTECTION_ENABLE
+    /* Bus gerilimi limitin altındayken ISENSE zinciri geçersiz olabilir.
+     * Bu durumda hard strike biriktirme.
+     */
+    const uint16_t uvLimitAdc = VSENSE_MV_TO_ADC(uvCfg.limitMv);
+    if (voltageRaw <= uvLimitAdc) {
+        hardStrikes = 0;
+        return false;
+    }
+#endif
 
     if (currentDelta >= protCfg.hardLimitAdc) {
         ++hardStrikes;
@@ -279,16 +290,20 @@ void Prot_GetUndervoltageConfig(UndervoltageConfig *cfg) {
 }
 
 void Prot_GetSnapshot(ProtectionSnapshot *snap) {
+    /* ISR tutarlılığı: kısa süreli interrupt disable ile atomik kopyalama */
+    __disable_irq();
     snap->currentRaw = currentRaw;
     snap->currentFiltered = (uint16_t)currentFiltered;
     snap->currentOffset = currentOffset;
     snap->currentDelta = currentDelta;
     snap->voltageRaw = voltageRaw;
-    snap->estimatedVolts = Prot_GetEstimatedVolts();
-    snap->estimatedAmps = Prot_GetEstimatedAmps();
     snap->softLimitActive = softLimitActive;
     snap->hardStrikes = hardStrikes;
     snap->undervoltageStrikes = undervoltageStrikes;
+    __enable_irq();
+    /* Hesaplama fonksiyonları interrupt dışında çağrılır */
+    snap->estimatedVolts = Prot_GetEstimatedVolts();
+    snap->estimatedAmps = Prot_GetEstimatedAmps();
 }
 
 void Prot_SetInaGain(float gain) {

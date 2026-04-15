@@ -54,7 +54,6 @@ static void DWT_Init(void) {
  * Neden 96 MHz (100 değil)?
  *   Saat ağacında VCO=192 MHz hedeflenir.
  *   SYSCLK = VCO/PLLP = 192/2 = 96 MHz.
- *   SYSCLK = VCO/PLLP = 192/2 = 96 MHz
  *
  *   PLLN=192 ile VCO=192 MHz seçilidir.
  *
@@ -301,8 +300,8 @@ void BoardIO_InitControlTimer(void) {
         while (1);
     }
 
-    /* Update interrupt — en yüksek öncelik (TIM1 PWM ile çakışmasın) */
-    HAL_NVIC_SetPriority(TIM3_IRQn, 0, 0);
+    /* Update interrupt — yüksek öncelik ama SysTick'e (priority 15) alan bırak */
+    HAL_NVIC_SetPriority(TIM3_IRQn, 1, 0);
     HAL_NVIC_EnableIRQ(TIM3_IRQn);
 }
 
@@ -361,8 +360,8 @@ void BoardIO_InitADC(void) {
         while (1);
     }
 
-    /* ADC ön bölücü: PCLK2/4 = 24 MHz */
-    ADC1_COMMON->CCR = ADC_CCR_ADCPRE_0;  /* 01 = /4 */
+    /* ADC ön bölücü: PCLK2/4 = 24 MHz (read-modify-write: diğer bitleri koru) */
+    ADC1_COMMON->CCR = (ADC1_COMMON->CCR & ~ADC_CCR_ADCPRE) | ADC_CCR_ADCPRE_0;
 
     {
         ADC_ChannelConfTypeDef cfg = {0};
