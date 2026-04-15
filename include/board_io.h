@@ -36,6 +36,7 @@ void BoardIO_InitPWM(void);           /* TIM1 komplementer + deadtime */
 void BoardIO_InitControlTimer(void);
 void BoardIO_StartControlTimer(void);
 void BoardIO_InitHallTimer(void);     /* TIM4 hall sensor interface */
+void BoardIO_StartHallTimer(void);    /* Hall_Init sonrası çağrılır */
 void BoardIO_InitADC(void);
 void BoardIO_InitUART(void);
 void BoardIO_InitWatchdog(void);

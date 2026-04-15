@@ -242,7 +242,7 @@ void BoardIO_InitPWM(void) {
     bdtr.OffStateRunMode  = TIM_OSSR_ENABLE;          /* çalışırken idle geçerli */
     bdtr.OffStateIDLEMode = TIM_OSSI_ENABLE;          /* dururken de idle geçerli */
     bdtr.LockLevel        = TIM_LOCKLEVEL_OFF;
-    bdtr.DeadTime         = DEADTIME_COUNTS;          /* 50 → 500 ns */
+    bdtr.DeadTime         = DEADTIME_COUNTS;          /* 20 → ~208 ns MCU-tarafı */
 #if TIM1_BREAK_ENABLE
     bdtr.BreakState       = TIM_BREAK_ENABLE;
     bdtr.BreakPolarity    = (TIM1_BREAK_ACTIVE_HIGH != 0U) ? TIM_BREAKPOLARITY_HIGH : TIM_BREAKPOLARITY_LOW;
@@ -340,7 +340,7 @@ void BoardIO_InitHallTimer(void) {
     htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
 
     TIM_HallSensor_InitTypeDef hallCfg = {0};
-    hallCfg.IC1Polarity       = TIM_ICPOLARITY_RISING;
+    hallCfg.IC1Polarity       = TIM_ICPOLARITY_BOTHEDGE;
     hallCfg.IC1Prescaler      = TIM_ICPSC_DIV1;
     hallCfg.IC1Filter         = 4U;
     hallCfg.Commutation_Delay = 0U;
@@ -349,13 +349,18 @@ void BoardIO_InitHallTimer(void) {
         while (1);
     }
 
-    /* Capture IRQ etkin: hall gecisleri event-driven yakalanir */
+    /* NVIC ayarla ama interrupt'i henuz baslatma.
+     * Hall_Init() tamamlandiktan sonra BoardIO_StartHallTimer() ile baslatilir.
+     */
+    HAL_NVIC_SetPriority(TIM4_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(TIM4_IRQn);
+}
+
+/* Hall_Init() tamamlandiktan sonra cagrilir — capture interrupt baslatilir */
+void BoardIO_StartHallTimer(void) {
     if (HAL_TIMEx_HallSensor_Start_IT(&htim4) != HAL_OK) {
         while (1);
     }
-
-    HAL_NVIC_SetPriority(TIM4_IRQn, 0, 0);
-    HAL_NVIC_EnableIRQ(TIM4_IRQn);
 }
 
 /* ====================================================================

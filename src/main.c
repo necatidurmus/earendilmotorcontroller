@@ -131,6 +131,7 @@ int main(void) {
     };
     Hall_Init(&hallCfg);
     Hall_SetDirection(1);  /* forward by default */
+    BoardIO_StartHallTimer();  /* Hall_Init tamamlandı, TIM4 capture interrupt başlat */
 
     /* Initialize commutation */
     Comm_Init();
