@@ -1,11 +1,11 @@
 /*
- * cli.c — Serial command-line interface for motor bring-up
+ * cli.c — Motor ilk enerjileme için seri komut satırı arayüzü
  *
- * Uses UART2 (PA2/PA3) at 115200 baud.
- * Non-blocking line reader with idle-timeout auto-parse.
+ * UART2 (PA2/PA3) 115200 baud kullanır.
+ * Non-blocking satır okuyucu ile idle-timeout otomatik işleme.
  *
- * All prints happen in main-loop context (never from ISR).
- * ISR state is snapshotted before printing for consistency.
+ * Tüm yazdırma işlemleri ana döngü bağlamında yapılır (ISR'dan asla).
+ * ISR durumu yazdırma öncesinde kopyalanır (tutarlılık için).
  */
 
 #include "cli.h"
@@ -26,16 +26,16 @@
  * main.c'deki volatile değişkenlere extern erişim.
  */
 
-/* These are set/read by CLI and consumed by the ISR in main.c */
+/* CLI tarafından yazılır/okunur, ISR tarafından tüketilir */
 extern volatile RunMode   g_runMode;
 extern volatile uint16_t  g_commandDuty;
 extern volatile uint16_t  g_appliedDuty;
 
-/* ISR tick counter (for status display) */
+/* ISR tick sayacı (status gösterimi için) */
 extern volatile uint32_t  g_isrTickCount;
 
 /* ====================================================================
- * Line buffer state
+ * Satır tamponu durumu
  * ==================================================================== */
 
 static char     lineBuf[CLI_LINE_BUF];
@@ -43,11 +43,12 @@ static uint8_t  linePos = 0;
 static uint32_t lastRxTick = 0;
 
 /* ====================================================================
- * Transport helpers
+ * Taşıma katmanı yardımcıları
  * ==================================================================== */
 
 static void cliTransportWrite(const uint8_t *data, uint16_t len) {
     HAL_UART_Transmit(&huart2, (uint8_t *)data, len, 100);
+    BoardIO_KickWatchdog();  /* uzun print dizilerinde watchdog timeout'unu önle */
 }
 
 static int cliTransportRead(uint8_t *c) {
@@ -127,7 +128,7 @@ static void cliPrintHallBits(uint8_t hall) {
 }
 
 /* ====================================================================
- * Command handlers
+ * Komut işleyicileri
  * ==================================================================== */
 
 static const char* modeName(RunMode m) {

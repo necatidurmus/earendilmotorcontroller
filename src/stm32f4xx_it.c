@@ -32,6 +32,7 @@ void HardFault_Handler(void) {
     TIM1->CCR1 = 0;
     TIM1->CCR2 = 0;
     TIM1->CCR3 = 0;
+    TIM1->BDTR &= ~TIM_BDTR_MOE;
     while (1) { }
 }
 

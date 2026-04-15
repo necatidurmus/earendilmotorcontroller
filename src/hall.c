@@ -1,10 +1,10 @@
 /*
- * hall.c — Hall sensor processing implementation
+ * hall.c — Hall sensör işleme implementasyonu
  *
- * Reads PB6/PB7/PB8 with oversampling and majority vote.
- * Applies polarity mask, profile lookup, state offset.
- * Debounces state changes (min interval).
- * Holds last valid state during invalid hall periods (timeout).
+ * PB6/PB7/PB8 oversampling ve çoğunluk oyu ile okunur.
+ * Polarity mask, profil lookup, state offset uygulanır.
+ * Durum değişimleri debounce edilir (min aralık).
+ * Geçersiz hall sürelerinde son geçerli durum tutulur (timeout).
  */
 
 #include "hall.h"
@@ -14,7 +14,7 @@
 /*
  * Hall → komütasyon durumu dönüşüm tablosu.
  * motor_config.h'de extern olarak bildirilir, burada tanımlanır.
- * Index = XOR-düzeltilmiş ham hall (0..7), Değer = durum 0..5 veya 255=geçersiz
+ * İndeks = XOR-düzeltilmiş ham hall (0..7), Değer = durum 0..5 veya 255=geçersiz
  */
 const uint8_t HALL_TO_STATE_PROFILES[HALL_PROFILE_COUNT][8] = {
     {255, 0, 4, 5, 2, 1, 3, 255},  /* Profil 0: mevcut motor kablolaması */
@@ -23,27 +23,27 @@ const uint8_t HALL_TO_STATE_PROFILES[HALL_PROFILE_COUNT][8] = {
     {255, 2, 4, 3, 0, 1, 5, 255},  /* Profil 3: alternatif sıralama */
 };
 
-/* Runtime configuration */
+/* Çalışma zamanı konfigürasyonu */
 static HallConfig hallCfg = {
     .profile = 0,
     .polarityMask = 0,
     .stateOffset = 0
 };
 
-/* State tracking */
-static uint8_t  lastAcceptedState = 255;
-static uint32_t lastAcceptedTimeUs = 0;
-static uint32_t lastValidTimeUs = 0;
+/* Durum takibi */
+static volatile uint8_t  lastAcceptedState = 255;
+static volatile uint32_t lastAcceptedTimeUs = 0;
+static volatile uint32_t lastValidTimeUs = 0;
 
-static uint8_t  lastRaw = 0;
-static uint8_t  lastCorrected = 0;
-static uint8_t  lastMapped = 255;
+static volatile uint8_t  lastRaw = 0;
+static volatile uint8_t  lastCorrected = 0;
+static volatile uint8_t  lastMapped = 255;
 
-static uint8_t  driveDirection = 0;  /* 0=forward, 1=backward */
-static uint8_t  currentDriveState = 255;
+static volatile uint8_t  driveDirection = 0;  /* 0=ileri, 1=geri */
+static volatile uint8_t  currentDriveState = 255;
 
 /* ====================================================================
- * Internal helpers
+ * İç yardımcı fonksiyonlar
  * ==================================================================== */
 
 static uint8_t wrapState(int16_t value) {
@@ -77,7 +77,7 @@ static uint8_t mapHallToState(uint8_t corrected) {
 }
 
 /* ====================================================================
- * Public API
+ * Genel API
  * ==================================================================== */
 
 void Hall_Init(const HallConfig *cfg) {
@@ -173,10 +173,14 @@ uint8_t Hall_GetDriveState(void) {
 }
 
 void Hall_GetSnapshot(HallSnapshot *snap) {
-    Hall_GetDriveState();
+    /* ISR tutarlılığı: kısa süreli interrupt disable ile atomik kopyalama */
+    __disable_irq();
     snap->raw = lastRaw;
     snap->corrected = lastCorrected;
     snap->mapped = lastMapped;
     snap->accepted = lastAcceptedState;
+    __enable_irq();
+    /* driveState hesaplaması ISR değişkenlerine bağlı değil, dışarıda yapılabilir */
+    Hall_GetDriveState();
     snap->driveState = currentDriveState;
 }

@@ -124,11 +124,13 @@ void Comm_Init(void) {
  *
  * İşlem sırası:
  *   1. Gerekirse MOE'yi tekrar aç (clear/re-arm sonrası)
- *   2. Sektör/yön değişiminde CCR temizle + CCER güncelle
- *   3. Source faza duty, sink faza 0 yaz
+ *   2. Sektör/yön değişiminde: önce CCR'leri yeni değerlerle yaz,
+ *      sonra CCER bacak haritasını güncelle (glitch-free geçiş)
+ *   3. Aynı sektörde: sadece duty güncelle
  *
- * Donanım deadtime CCER geçişini korur — her CCR/CCER sırası güvenli.
- * Atomik değil ama deadtime (500ns) tüm glitch'leri maskeler.
+ * Donanım deadtime CCER geçişini korur — shoot-through riski yok.
+ * CCR'ler CCER'den önce yazılır → yeni bacak aktif olduğunda
+ * doğru duty zaten shadow register'da bekler.
  */
 void Comm_ApplyStep(uint8_t state, uint16_t duty, RunMode dir) {
     if (state > 5 || duty == 0U || dir == RUN_STOPPED) {
@@ -145,12 +147,10 @@ void Comm_ApplyStep(uint8_t state, uint16_t duty, RunMode dir) {
     if (dir == RUN_FORWARD) {
         sourcePhase = SOURCE_FWD[state];
         sinkPhase = SINK_FWD[state];
-    } else if (dir == RUN_BACKWARD) {
+    } else {
+        /* RUN_BACKWARD — BWD tablosu source/sink'i terslenir */
         sourcePhase = SOURCE_BWD[state];
         sinkPhase = SINK_BWD[state];
-    } else {
-        Comm_AllOff();
-        return;
     }
 
     uint32_t ccerValue = buildCcerMask(sourcePhase, sinkPhase);
@@ -160,15 +160,25 @@ void Comm_ApplyStep(uint8_t state, uint16_t duty, RunMode dir) {
     }
 
     if (state != activeState || dir != activeDir) {
-        /* Sadece sektör/yön değişiminde bacak enable haritasını güncelle */
+        /*
+         * Sektör/yön değişimi — güvenli geçiş sırası:
+         *   1. Önce CCER'den eski bacakları kapat (cross-conduction yok)
+         *   2. Tüm CCR'leri sıfırla
+         *   3. Yeni source ve sink CCR'lerini doğru değerlerle yaz
+         *   4. CCER'i güncelle (yeni bacaklar aktif olduğunda CCR hazır)
+         */
+        TIM1->CCER &= ~CCER_COMM_MASK;
         TIM1->CCR1 = 0;
         TIM1->CCR2 = 0;
         TIM1->CCR3 = 0;
+        setPhaseDuty(sourcePhase, duty);
+        setPhaseDuty(sinkPhase, 0U);
         TIM1->CCER = (TIM1->CCER & ~CCER_COMM_MASK) | ccerValue;
+    } else {
+        /* Aynı sektörde — sadece duty güncelle */
+        setPhaseDuty(sourcePhase, duty);
+        setPhaseDuty(sinkPhase, 0U);
     }
-
-    setPhaseDuty(sourcePhase, duty);
-    setPhaseDuty(sinkPhase, 0U);
 
     activeState = state;
     activeDuty  = duty;
