@@ -5,7 +5,7 @@
  * Sadece STM32Cube HAL kullanır — Arduino bağımlılığı yok.
  *
  * Pin haritası:
- *   Hall:      PB6 (A), PB7 (B), PB8 (C) — dijital giriş, pull-up
+ *   Hall:      PB6 (A), PB7 (B), PB8 (C) — TIM4_CH1/CH2/CH3 (AF2)
  *   Yük. taraf: PA8/PA9/PA10  — TIM1_CH1/CH2/CH3  (AF1) — L6388 INH
  *   Düş. taraf: PA7/PB0/PB1   — TIM1_CH1N/CH2N/CH3N (AF1) — L6388 INL
  *   ISENSE:    PA0 — ADC1_IN0
@@ -28,6 +28,7 @@
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim3;
+TIM_HandleTypeDef htim4;
 ADC_HandleTypeDef hadc1;
 UART_HandleTypeDef huart2;
 static DMA_HandleTypeDef hdma_adc1;
@@ -63,6 +64,7 @@ static void DWT_Init(void) {
  *
  * TIM1 (APB2): 96 MHz (APB2 prescaler=1 → x1 çarpanı)
  * TIM3 (APB1): 96 MHz (APB1 prescaler=2 → x2 çarpanı)
+ * TIM4 (APB1): 96 MHz (APB1 prescaler=2 → x2 çarpanı)
  * ==================================================================== */
 
 void BoardIO_InitClock(void) {
@@ -124,7 +126,7 @@ void BoardIO_InitGPIO(void) {
     HAL_GPIO_Init(LED_PORT, &gpio);
     HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_SET); /* SET = LED kapalı */
 
-    /* Hall girişleri — PB6/PB7/PB8, pull-up */
+    /* Hall pinleri başlangıçta girişe çekilir; TIM4 init içinde AF2 yapılır */
     gpio.Pin   = HALL_A_PIN | HALL_B_PIN | HALL_C_PIN;
     gpio.Mode  = GPIO_MODE_INPUT;
     gpio.Pull  = GPIO_PULLUP;
@@ -308,6 +310,52 @@ void BoardIO_InitControlTimer(void) {
 /* Tüm init'ler tamamlandıktan sonra çağır */
 void BoardIO_StartControlTimer(void) {
     HAL_TIM_Base_Start_IT(&htim3);
+}
+
+/* ====================================================================
+ * TIM4 Hall Sensor Interface
+ *
+ * PB6/PB7/PB8 -> TIM4_CH1/CH2/CH3 (AF2)
+ * Prescaler=95 ile sayaç 1 MHz (1 us çözünürlük)
+ * Hall mode her geçişte CC1 capture üretir (event-driven hall acquisition)
+ * ==================================================================== */
+
+void BoardIO_InitHallTimer(void) {
+    __HAL_RCC_TIM4_CLK_ENABLE();
+
+    /* PB6/PB7/PB8 -> AF2 TIM4_CH1/CH2/CH3 */
+    GPIO_InitTypeDef gpio = {0};
+    gpio.Pin       = HALL_A_PIN | HALL_B_PIN | HALL_C_PIN;
+    gpio.Mode      = GPIO_MODE_AF_PP;
+    gpio.Pull      = GPIO_PULLUP;
+    gpio.Speed     = GPIO_SPEED_FREQ_LOW;
+    gpio.Alternate = HALL_TIMER_AF;
+    HAL_GPIO_Init(GPIOB, &gpio);
+
+    htim4.Instance               = TIM4;
+    htim4.Init.Prescaler         = HALL_TIMER_PRESCALER;
+    htim4.Init.CounterMode       = TIM_COUNTERMODE_UP;
+    htim4.Init.Period            = HALL_TIMER_PERIOD;
+    htim4.Init.ClockDivision     = TIM_CLOCKDIVISION_DIV1;
+    htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+
+    TIM_HallSensor_InitTypeDef hallCfg = {0};
+    hallCfg.IC1Polarity       = TIM_ICPOLARITY_RISING;
+    hallCfg.IC1Prescaler      = TIM_ICPSC_DIV1;
+    hallCfg.IC1Filter         = 4U;
+    hallCfg.Commutation_Delay = 0U;
+
+    if (HAL_TIMEx_HallSensor_Init(&htim4, &hallCfg) != HAL_OK) {
+        while (1);
+    }
+
+    /* Capture IRQ etkin: hall gecisleri event-driven yakalanir */
+    if (HAL_TIMEx_HallSensor_Start_IT(&htim4) != HAL_OK) {
+        while (1);
+    }
+
+    HAL_NVIC_SetPriority(TIM4_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(TIM4_IRQn);
 }
 
 /* ====================================================================
@@ -534,6 +582,7 @@ void BoardIO_InitAll(void) {
     HAL_Init();               /* HAL_Init SysTick'i 1 kHz'de kurar */
     BoardIO_InitClock();
     BoardIO_InitGPIO();
+    BoardIO_InitHallTimer();
     BoardIO_InitADC();
     BoardIO_InitPWM();        /* TIM1 komplementer + deadtime */
     BoardIO_InitControlTimer();

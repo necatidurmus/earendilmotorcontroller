@@ -3,11 +3,12 @@
  *
  * STM32Cube HAL init çağrılarını şunlar için sarar:
  *   - Sistem saati (25 MHz HSE'den 96 MHz)
- *   - GPIO pinleri (hall girişleri, LED)
+ *   - GPIO pinleri (LED + analog + UART + PWM)
  *   - TIM1 komplementer PWM çıkışları:
  *       Yüksek taraf: PA8/PA9/PA10  → TIM1_CH1/CH2/CH3  (AF1)
  *       Düşük taraf:  PA7/PB0/PB1   → TIM1_CH1N/CH2N/CH3N (AF1)
  *   - TIM3 kontrol zamanlayıcısı (12.5 kHz ISR)
+ *   - TIM4 hall sensor interface (PB6/PB7/PB8 capture)
  *   - ADC1 (ISENSE PA0, VSENSE PA4)
  *   - USART2 CLI seri (PA2/PA3)
  *
@@ -34,6 +35,7 @@ void BoardIO_InitGPIO(void);
 void BoardIO_InitPWM(void);           /* TIM1 komplementer + deadtime */
 void BoardIO_InitControlTimer(void);
 void BoardIO_StartControlTimer(void);
+void BoardIO_InitHallTimer(void);     /* TIM4 hall sensor interface */
 void BoardIO_InitADC(void);
 void BoardIO_InitUART(void);
 void BoardIO_InitWatchdog(void);
