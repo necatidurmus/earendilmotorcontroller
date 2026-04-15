@@ -5,6 +5,7 @@
  *   - Cortex-M4 system exception handlers
  *   - SysTick handler (HAL 1 ms timebase)
  *   - TIM3 update ISR (motor control hot path)
+ *   - TIM4 hall capture ISR (event-driven hall acquisition)
  */
 
 #include "stm32f4xx_hal.h"
@@ -13,6 +14,7 @@
 
 /* External HAL handles */
 extern TIM_HandleTypeDef htim3;
+extern TIM_HandleTypeDef htim4;
 
 /* Motor control tick — implemented in main.c */
 extern void MotorControl_Tick(void);
@@ -82,4 +84,15 @@ void TIM3_IRQHandler(void) {
             MotorControl_Tick();
         }
     }
+}
+
+/* ====================================================================
+ * TIM4_IRQHandler — hall sensor capture ISR
+ *
+ * Hall gecisleri TIM4 Hall Sensor Interface tarafindan capture edilir.
+ * Detayli state/mapping/debounce islemleri hall.c callback'indedir.
+ * ==================================================================== */
+
+void TIM4_IRQHandler(void) {
+    HAL_TIM_IRQHandler(&htim4);
 }

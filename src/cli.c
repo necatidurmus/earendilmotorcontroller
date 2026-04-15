@@ -243,6 +243,12 @@ static void cmdStatus(void) {
     if (hs.driveState <= 5) cliPrintUint(hs.driveState); else cliPrint("OFF");
     cliPrint(" drvAct=");
     if (Comm_GetActiveState() <= 5) cliPrintUint(Comm_GetActiveState()); else cliPrint("OFF");
+    cliPrint(" tUs=");
+    cliPrintUint(hs.lastTransitionUs);
+    cliPrint(" perUs=");
+    cliPrintUint(hs.sectorPeriodUs);
+    cliPrint(" stale=");
+    cliPrint(hs.stale ? "1" : "0");
     cliPrintln("");
 
     /* Current snapshot */
@@ -292,6 +298,12 @@ static void cmdHall(void) {
     if (hs.driveState <= 5) cliPrintUint(hs.driveState); else cliPrint("OFF");
     cliPrint(" drvAct=");
     if (Comm_GetActiveState() <= 5) cliPrintUint(Comm_GetActiveState()); else cliPrint("OFF");
+    cliPrint(" tUs=");
+    cliPrintUint(hs.lastTransitionUs);
+    cliPrint(" perUs=");
+    cliPrintUint(hs.sectorPeriodUs);
+    cliPrint(" stale=");
+    cliPrint(hs.stale ? "1" : "0");
     cliPrintln("");
 }
 

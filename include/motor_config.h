@@ -98,9 +98,9 @@
  *
  * TIM1 Deadtime:
  *   96 MHz tick, 1 tick = ~10.4 ns
- *   DEADTIME_COUNTS = 50 -> ~521 ns yazılımdan deadtime
+ *   DEADTIME_COUNTS = 20 -> ~208 ns yazılımdan deadtime
  *   L6388 ayrıca ~300-400 ns dahili deadtime ekler
- *   Toplam efektif = ~820-920 ns — bench'te osiloskopla doğrulan
+ *   Toplam efektif = ~508-608 ns — bench'te osiloskopla doğrulan
  *
  * TIM1 Break (BKIN):
  *   Donanımsal hızlı kapatma için TIM1 break girişi opsiyonel.
@@ -117,11 +117,12 @@
  *
  * SYSCLK=96 MHz ile TIM1 saati:
  *   APB2 prescaler=1 → TIM1 clock = APB2 = 96 MHz → tdts = 10.4 ns
- *   DEADTIME_COUNTS=50 → 50 × 10.4 ns ≈ 521 ns MCU-tarafı deadtime
- *   L6388 iç DT ~300-400 ns → toplam ~820-920 ns
- * [AYAR] — güvenli başlangıç. Osiloskopla doğrula.
+ *   DEADTIME_COUNTS=20 → 20 × 10.4 ns ≈ 208 ns MCU-tarafı deadtime
+ *   L6388 iç DT ~300-400 ns → toplam ~508-608 ns
+ * [AYAR] — 36V sistemde daha düşük deadtime, daha az diyot iletim kaybı.
+ * Osiloskopla doğrula.
  */
-#define DEADTIME_COUNTS     50U
+#define DEADTIME_COUNTS     20U
 
 /* TIM1 Break/BKIN (opsiyonel güvenlik) */
 #define TIM1_BREAK_ENABLE        0U
@@ -156,9 +157,36 @@
  * 3. Hall sensör işleme — [AYAR]
  * ==================================================================== */
 
-#define HALL_OVERSAMPLE          7      /* örnekleme başına okuma, çoğunluk oyu */
+/*
+ * TIM4 Hall Sensor Interface Mode:
+ *   STM32F411, APB1 timer saati = 96 MHz (x2 çarpanı)
+ *   PB6/PB7/PB8 → TIM4_CH1/CH2/CH3 (AF2)
+ *   TI1=PB6, TI2=PB7, TI3=PB8 — üç kanallı Hall sensor arayüzü
+ *
+ * TIM4 clock = 96 MHz (APB1 prescaler=2 → APB1=48 MHz → x2)
+ * Prescaler = 95 → tick = 96/(95+1) = 1 MHz (1 µs çözünürlük)
+ * Max period = 65535 → ~65 ms per overflow
+ *
+ * Hall sensor interface (TIM4_SMCR.SMS=111):
+ *   Harware hall sensors trigger counter reset on any transition.
+ *   Three consecutive hall sensors (3-wire) connected to TI1..TI3.
+ *   Combined with edge detector, produces commutation timer events.
+ *
+ * TIM4_IRQHandler yaklaşık 6-12 kHz hall geçiş hızında tetiklenir.
+ * Yüksek hızda daha sık, düşük hızda daha seyrek.
+ */
+#define HALL_TIMER_HANDLE       htim4
+#define HALL_TIMER              TIM4
+#define HALL_TIMER_PRESCALER    95U       /* 96 MHz / 96 = 1 MHz (1 µs/tick) */
+#define HALL_TIMER_PERIOD       0xFFFFU   /* max, overflow ~65 ms */
+#define HALL_TIMER_AF           GPIO_AF2_TIM4  /* PB6/PB7/PB8 → AF2 */
+
+/* Hall filtering: minimum µs between accepted state transitions */
 #define MIN_STATE_INTERVAL_US   40U    /* debounce: durum değişimleri arası min süre */
-#define INVALID_HALL_HOLD_US  1500U    /* hall geçersizse son geçerli durumu tut */
+/* Legacy polling fallback — sadece debug/HALL_OVERSAMPLE okuması için */
+#define HALL_OVERSAMPLE          7      /* oversample count, majority vote */
+/* Geçersiz hall süresinde son geçerli durumu tut */
+#define INVALID_HALL_HOLD_US   1500U    /* hall geçersizse son geçerli durumu tut */
 
 /* ====================================================================
  * 4. ADC ve akım ölçümü — [TASARIM] (INA181 kazancı bench'te doğrulanmalı)
@@ -200,7 +228,7 @@
  * 5. Görev döngüsü ve rampa — [AYAR]
  * ==================================================================== */
 
-#define DUTY_DEFAULT         70U        /* başlangıç komut değeri (0..255) */
+#define DUTY_DEFAULT         8U         /* güvenli başlangıç komut değeri (0..255) */
 #define DUTY_MIN_ACTIVE      8U         /* MOSFET anahtarlamasını sürdürmek için min */
 #define DUTY_RAMP_UP_STEP    2U         /* tick başına artış adımı */
 #define DUTY_RAMP_DOWN_STEP  4U         /* tick başına azalış adımı */
@@ -217,8 +245,8 @@
  * 12-bit ham değerler, amper DEĞİL.
  * Gerçek zamanlı delta için 'current' CLI komutunu kullan.
  */
-#define CURRENT_SOFT_LIMIT   450U       /* bu deltanın üstünde duty azalt */
-#define CURRENT_HARD_LIMIT   700U       /* bu deltanın üstünde fault latched */
+#define CURRENT_SOFT_LIMIT   180U       /* bu deltanın üstünde duty azalt */
+#define CURRENT_HARD_LIMIT   260U       /* bu deltanın üstünde fault latched */
 #define HARD_LIMIT_STRIKES   3          /* latch için gereken ardışık aşım sayısı */
 
 /* Yumuşak limit geri çekim: backoff = 3 + (aşım / 16), max 80'de kesilir */
@@ -282,6 +310,7 @@ extern "C" {
 
 extern TIM_HandleTypeDef  htim1;    /* PWM timer */
 extern TIM_HandleTypeDef  htim3;    /* control timer */
+extern TIM_HandleTypeDef  htim4;    /* hall capture timer */
 extern ADC_HandleTypeDef  hadc1;    /* current/voltage sense */
 extern UART_HandleTypeDef huart2;   /* CLI UART — USART2 PA2/PA3 */
 

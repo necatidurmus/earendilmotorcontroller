@@ -56,8 +56,8 @@ void MotorControl_Tick(void) {
     /* 1) ADC örnekleme (içeride decimation ile) */
     Prot_SampleTick();
 
-    /* 1.05) Hall snapshot'u her tick güncel tut
-     * STOPPED modda da CLI 'hall' çıktısı canlı kalmalı.
+    /* 1.05) Event-driven hall state'i timeout kuraliyla resolve et
+     * Hall acquisition TIM4 capture ISR'da yapilir.
      */
     uint32_t nowUs = (uint32_t)((uint64_t)g_isrTickCount * 80U);
     uint8_t  baseState = Hall_ResolveState(nowUs);
@@ -131,6 +131,7 @@ int main(void) {
     };
     Hall_Init(&hallCfg);
     Hall_SetDirection(1);  /* forward by default */
+    BoardIO_StartHallTimer();  /* Hall_Init tamamlandı, TIM4 capture interrupt başlat */
 
     /* Initialize commutation */
     Comm_Init();

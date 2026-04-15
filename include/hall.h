@@ -1,14 +1,14 @@
 /*
- * hall.h — Hall sensor reading, debouncing, and state mapping
+ * hall.h — TIM4 tabanlı hall acquisition, mapping ve durum kabul katmanı
  *
  * Responsibilities:
- *   - Oversampled majority-vote hall reading
+ *   - TIM4 hall capture event'lerinden hall geçişlerini işlemek
  *   - Polarity mask / inversion
  *   - Profile-based hall-to-commutation-state lookup
  *   - State offset adjustment
  *   - Debounce (min interval between state changes)
- *   - Invalid hall hold (keep last valid state for timeout period)
- *   - Diagnostic snapshot for CLI
+ *   - Invalid hall hold + timeout
+ *   - Timestamp/sector period snapshot (CLI tanı)
  */
 
 #ifndef HALL_H
@@ -34,6 +34,9 @@ typedef struct {
     uint8_t mapped;             /* after profile lookup (0..5 or 255) */
     uint8_t accepted;           /* debounced accepted state (0..5 or 255) */
     uint8_t driveState;         /* final drive state after direction (0..5 or 255) */
+    uint32_t lastTransitionUs;  /* son hall transition zamanı (TIM4 zaman tabanı) */
+    uint32_t sectorPeriodUs;    /* son transition aralığı (us) */
+    uint8_t stale;              /* timeout/stale durumu: 1=geç veri */
 } HallSnapshot;
 
 /* Initialize hall module with config */
@@ -46,9 +49,9 @@ void Hall_SetStateOffset(int8_t offset);
 void Hall_GetConfig(HallConfig *cfg);
 
 /*
- * Core function: read hall sensors, resolve to commutation state.
+ * Core function: son event-driven hall state'i timeout kurallarıyla resolve eder.
  * Returns: 0..5 = valid state, 255 = invalid/hall error.
- * Call from ISR context. Uses current tick timestamp.
+ * Call from ISR context. nowUs: kontrol ISR zaman tabanı.
  */
 uint8_t Hall_ResolveState(uint32_t nowUs);
 
@@ -65,7 +68,7 @@ void Hall_SetDirection(uint8_t forward);
 /* Take a diagnostic snapshot for CLI printing (non-ISR safe) */
 void Hall_GetSnapshot(HallSnapshot *snap);
 
-/* Read raw hall GPIO (for calibration / debug) */
+/* Ham hall GPIO oku (debug/fallback) */
 uint8_t Hall_ReadRaw(void);
 
 #ifdef __cplusplus
