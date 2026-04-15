@@ -183,8 +183,6 @@
 
 /* Hall filtering: minimum µs between accepted state transitions */
 #define MIN_STATE_INTERVAL_US   40U    /* debounce: durum değişimleri arası min süre */
-/* Legacy polling fallback — sadece debug/HALL_OVERSAMPLE okuması için */
-#define HALL_OVERSAMPLE          7      /* oversample count, majority vote */
 /* Geçersiz hall süresinde son geçerli durumu tut */
 #define INVALID_HALL_HOLD_US   1500U    /* hall geçersizse son geçerli durumu tut */
 

@@ -1,13 +1,22 @@
 /*
- * hall.c — TIM4 tabanli hall sensor isleme implementasyonu
+ * hall.c — TIM4 tabanli event-driven hall sensor isleme
  *
- * Yeni ana yol:
- *   - PB6/PB7/PB8 TIM4 Hall Sensor Interface ile event-driven izlenir
- *   - Her hall gecisinde TIM4 capture IRQ tetiklenir
- *   - Gecis zamani (us), sektor periyodu, map/accept bilgisi ISR'da guncellenir
+ * Mimari:
+ *   - PB6/PB7/PB8 TIM4 Hall Sensor Interface (AF2) ile izlenir
+ *   - Her hall gecisinde TIM4 capture IRQ tetiklenir (BOTHEDGE)
+ *   - Counter her geciste sifirlanir (slave reset mode)
+ *   - CCR1 onceki gecisten bu yana gecen sureyi verir (us, PSC=95)
+ *   - hallProcessTransition() ISR'da state/timestamp gunceller
+ *   - TIM3 kontrol ISR'i yalnizca son kabul edilen state'i tuketir
  *
- * Legacy fallback:
- *   - Hall_ReadRaw() dogrudan GPIO okur (debug/kalibrasyon)
+ * GPIO IDR okuma:
+ *   readHallRawDirect() AF modundayken bile GPIO IDR uzerinden
+ *   pin seviyelerini okur. STM32'de IDR her zaman fiziksel pin
+ *   durumunu yansitir — AF modundan bagimsiz. Bu, hall bit
+ *   degerlerini almanin dogru ve tek yoludur.
+ *
+ * Hall_ReadRaw() / Hall_GetSnapshot():
+ *   Debug ve CLI tani icin kullanilir, kontrol yolunda degil.
  */
 
 #include "hall.h"
@@ -73,6 +82,11 @@ static uint32_t hallControlNowUs(void) {
     return (uint32_t)((uint64_t)ticks * 80U);
 }
 
+/*
+ * GPIO IDR uzerinden anlik hall pin durumlarini oku.
+ * AF modundayken bile IDR fiziksel pin seviyesini yansitir.
+ * TIM4 capture callback'inden ve debug/init'ten cagrilir.
+ */
 static uint8_t readHallRawDirect(void) {
     uint8_t hall = 0;
 
@@ -227,10 +241,16 @@ void Hall_GetConfig(HallConfig *cfg) {
     cfg->stateOffset = hallCfg.stateOffset;
 }
 
+/*
+ * Yon ayari — yalnizca diagnostik goruntuleme icin.
+ * Gercek komutasyon yonu Comm_ApplyStep()'e iletilen RunMode ile belirlenir.
+ * Bu fonksiyon Hall_GetDriveState() / HallSnapshot.driveState degerini etkiler.
+ */
 void Hall_SetDirection(uint8_t forward) {
     driveDirection = forward ? 0 : 1;
 }
 
+/* Debug/CLI icin anlik ham hall degeri — kontrol yolunda kullanilmaz */
 uint8_t Hall_ReadRaw(void) {
     return readHallRawDirect();
 }

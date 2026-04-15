@@ -30,9 +30,9 @@ Donanım değişikliği veya parametre ayarı için tek dokunma noktası. Her sa
 
 | Sabit | Pin | Açıklama |
 |---|---|---|
-| `HALL_A_PIN = GPIO_PIN_6` | PB6 | Faz A hall |
-| `HALL_B_PIN = GPIO_PIN_7` | PB7 | Faz B hall |
-| `HALL_C_PIN = GPIO_PIN_8` | PB8 | Faz C hall |
+| `HALL_A_PIN = GPIO_PIN_6` | PB6 | TIM4_CH1 (AF2) Hall A |
+| `HALL_B_PIN = GPIO_PIN_7` | PB7 | TIM4_CH2 (AF2) Hall B |
+| `HALL_C_PIN = GPIO_PIN_8` | PB8 | TIM4_CH3 (AF2) Hall C |
 
 ### Analog Girişler
 
@@ -70,15 +70,15 @@ Duty çözünürlüğü: 0..3199, yaklaşık 11.6 bit
 ### Deadtime Hesabı
 
 ```
-DEADTIME_COUNTS = 50
+DEADTIME_COUNTS = 20
 TIM1 tick süresi = 1 / 96 MHz ≈ 10.4 ns
-MCU deadtime = 50 × 10.4 ns ≈ 521 ns
+MCU deadtime = 20 × 10.4 ns ≈ 208 ns
 
 L6388 dahili propagasyon gecikmesi ≈ 300-400 ns
-Toplam ≈ 820-920 ns
+Toplam ≈ 508-608 ns
 
 [AYAR] Osiloskopla ölçüldükten sonra en küçük güvenli değere indirilebilir.
-        MOSFET Qg ve gate direncine bağlı olarak değişir.
+        MOSFET Qg ve gate dirençine bağlı olarak değişir.
 ```
 
 Deadtime nasıl ayarlanır:
@@ -94,11 +94,19 @@ CTRL_TIMER_PRESCALER = 95 → tick = 96 MHz / 96 = 1 MHz (1 µs)
 CTRL_TIMER_PERIOD = 79 → ISR = 1 MHz / 80 = 12.5 kHz (80 µs)
 ```
 
-ISR frekansını değiştirmek için `CTRL_TIMER_PERIOD` ayarlanır:
-- 10 kHz: period = `1 MHz / 10000 - 1 = 99`
-- 20 kHz: period = `1 MHz / 20000 - 1 = 49`
+### TIM4 Hall Sensor Interface
 
-**Not:** ISR frekansı artarsa ADC yükü oransal artar (`ADC_DECIMATION` de ayarlanmalı).
+```
+APB1 timer saati = 96 MHz
+HALL_TIMER_PRESCALER = 95 → tick = 96 MHz / 96 = 1 MHz (1 µs)
+HALL_TIMER_PERIOD = 0xFFFF → max ~65 ms (overflow)
+HALL_TIMER_AF = GPIO_AF2_TIM4 (PB6/PB7/PB8)
+
+Hall Sensor Mode: TI1S=1, SMS=Reset, TS=TI1F_ED
+IC1Polarity = BOTHEDGE → her XOR kenarında capture
+```
+
+**Not:** ISR frekansı artırsa ADC yükü oransal artar (`ADC_DECIMATION` de ayarlanmalı).
 
 ---
 
@@ -106,12 +114,9 @@ ISR frekansını değiştirmek için `CTRL_TIMER_PERIOD` ayarlanır:
 
 | Sabit | Değer | Açıklama |
 |---|---|---|
-| `HALL_OVERSAMPLE` | `7` | Tek okumada kaç kez GPIO okunur |
 | `MIN_STATE_INTERVAL_US` | `40` | Debounce: durum değişimleri arası minimum süre |
 | `INVALID_HALL_HOLD_US` | `1500` | Geçersiz hall'da son geçerli durumu tut bu kadar |
 | `HALL_PROFILE_COUNT` | `4` | Farklı hall eşleştirme profili sayısı |
-
-**`HALL_OVERSAMPLE`** artırılırsa gürültü azalır ama ISR süresi uzar. 7 değer için 21 GPIO okuma ≈ ek yük.
 
 **`MIN_STATE_INTERVAL_US`** çok küçük yapılırsa gürültü kaynaklı sahte geçişler kabul edilir. Çok büyük yapılırsa yüksek hız çalışmada doğru geçişler reddedilir.
 

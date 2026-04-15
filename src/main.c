@@ -4,6 +4,7 @@
  * STM32F411 Black Pill + L6388 + 6-NMOS sensörlü 6-adım BLDC sürücüsü
  *
  * Mimari:
+ *   - TIM4 ISR hall geçişlerini event-driven yakalar
  *   - TIM3 ISR 12.5 kHz'de MotorControl_Tick() çağırır
  *   - Ana döngü yalnızca CLI ve LED yanıp sönmeyi işler
  *   - Arduino bağımlılığı yok — saf STM32Cube HAL
@@ -47,6 +48,8 @@ volatile uint32_t  g_isrTickCount = 0;
  * MotorControl_Tick() — TIM3 ISR'dan 12.5 kHz'de çağrılır
  *
  * Motor kontrol hot path'in tamamı burada.
+ * Hall state TIM4 capture ISR tarafindan event-driven guncellenir;
+ * bu fonksiyon yalnizca son kabul edilen state'i tuketir (timeout ile).
  * Kısa, deterministik, blocking yok, print yok.
  * ==================================================================== */
 
@@ -159,6 +162,7 @@ int main(void) {
             " Earendil BLDC Motor Controller\r\n"
             " STM32F411 + L6388 + 6-NMOS\r\n"
             " Sensored 6-step CH/CHN sync drive\r\n"
+            " Hall: TIM4 event-driven capture\r\n"
             " Kontrol: 12.5 kHz TIM3 ISR\r\n"
             " CLI: UART2 @ 115200 (PA2/PA3)\r\n"
             "========================================\r\n"

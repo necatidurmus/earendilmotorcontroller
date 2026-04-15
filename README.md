@@ -35,9 +35,9 @@ Sensörlü 6-adım (6-step) trapezoidal komütasyon yapısı kullanan, STM32Cube
 | PA7 | TIM1_CH1N — Düşük taraf A (INL) | Çıkış | AF1 |
 | PB0 | TIM1_CH2N — Düşük taraf B (INL) | Çıkış | AF1 |
 | PB1 | TIM1_CH3N — Düşük taraf C (INL) | Çıkış | AF1 |
-| PB6 | Hall A | Giriş | Pull-up |
-| PB7 | Hall B | Giriş | Pull-up |
-| PB8 | Hall C | Giriş | Pull-up |
+| PB6 | TIM4_CH1 — Hall A | Giriş | AF2, Pull-up |
+| PB7 | TIM4_CH2 — Hall B | Giriş | AF2, Pull-up |
+| PB8 | TIM4_CH3 — Hall C | Giriş | AF2, Pull-up |
 | PA0 | ISENSE (ADC1_IN0) | Analog giriş | INA181 çıkışı |
 | PA4 | VSENSE (ADC1_IN4) | Analog giriş | Bölücü |
 | PA2 | USART2_TX | Çıkış | CLI |
@@ -75,10 +75,10 @@ earendilmotorcontroller/
     ├── main.c               Giriş noktası, ISR çağrısı, ana döngü
     ├── board_io.c           TIM1/TIM3/ADC/UART/GPIO başlatma
      ├── bldc_commutation.c   6-adım CH/CHN tabanlı senkron iletim komütasyonu
-    ├── hall.c               Hall okuma, majority vote, debounce
+    ├── hall.c               TIM4 event-driven hall capture, debounce, profil eşleştirme
     ├── protection.c         EMA, soft/hard limit, fault latch
     ├── cli.c                UART2 CLI, komut dispatcher
-    └── stm32f4xx_it.c       TIM3 ISR → MotorControl_Tick()
+    └── stm32f4xx_it.c       TIM3 ISR → MotorControl_Tick(), TIM4 ISR → Hall capture
 ```
 
 ---
@@ -88,24 +88,31 @@ earendilmotorcontroller/
 | Dosya | Açıklama |
 |---|---|
 | `motor_config.h` | Tüm pin, timer, ADC, koruma sabitleri. Değiştirme noktası. |
-| `board_io.c` | TIM1 komplementer PWM + deadtime, GPIO, ADC, UART başlatma. |
+| `board_io.c` | TIM1 komplementer PWM + deadtime, TIM4 hall timer, GPIO, ADC, UART başlatma. |
 | `bldc_commutation.c` | 6 adım × 2 yön CCER lookup tablosu (aktif faz çifti sürüşü). ISR hot path. |
-| `hall.c` | 7× majority vote, debounce, geçersiz hall hold. |
+| `hall.c` | TIM4 event-driven hall capture, debounce, profil eşleştirme. |
 | `protection.c` | EMA filtreli akım, soft/hard limit, fault latch, slew. |
 | `cli.c` | Non-blocking UART2 CLI, 15+ komut. |
 | `main.c` | MotorControl_Tick() ve main loop. |
-| `stm32f4xx_it.c` | TIM3_IRQHandler → MotorControl_Tick(). |
+| `stm32f4xx_it.c` | TIM3_IRQHandler → MotorControl_Tick(), TIM4_IRQHandler → Hall capture. |
 
 ---
 
 ## 6. Kontrol Mimarisi
 
 ```
+[TIM4 ISR — hall geçişinde]
+     └─ HAL_TIM_IC_CaptureCallback()
+          ├─ GPIO IDR'den hall bit'lerini oku
+          ├─ polarity mask + profil tablosu → state 0..5
+          ├─ debounce kontrolü
+          └─ lastAcceptedState / lastValidControlUs güncelle
+
 [TIM3 ISR @ 12.5 kHz]
      │
      ├─ Prot_SampleTick()     ← ADC örnekle (decimated)
+     ├─ Hall_ResolveState()   ← son kabul edilen state + timeout kontrolü
      ├─ Prot_CheckHardLimit() ← hard overcurrent?
-     ├─ Hall_ResolveState()   ← hall → state 0..5
      ├─ Prot_ApplySoftLimit() ← soft current limit
      ├─ Prot_SlewDuty()       ← rampa
      └─ Comm_ApplyStep()      ← TIM1 CCR + CCER yaz
@@ -127,7 +134,7 @@ earendilmotorcontroller/
 ### Mevcut yöntem (CH/CHN tabanlı senkron iletim)
 - Yüksek taraf: TIM1_CHx — PWM sinyali
 - Karşı faz düşük taraf: TIM1_CHxN — senkron iletim
-- Deadtime: BDTR.DTG = 50 → 500 ns MCU + ~300-400 ns L6388 dahili = ~800-900 ns toplam
+- Deadtime: BDTR.DTG = 20 → ~208 ns MCU + ~300-400 ns L6388 dahili = ~508-608 ns toplam
 
 ### Bu projede nasıl uygulandı
 
@@ -153,11 +160,15 @@ L6388 ayrı INH ve INL girişlerine sahiptir. TIM1_CHx → INH, TIM1_CHxN → IN
 
 ## 8. Hall İşleme Mantığı
 
-- Her ISR tick'inde 7 kez okunur, çoğunluk oyuyla gürültü filtrelenir
+- TIM4 Hall Sensor Interface modu ile PB6/PB7/PB8 izlenir (AF2)
+- Her hall geçişinde TIM4 capture interrupt tetiklenir (BOTHEDGE)
+- Counter geçişte sıfırlanır, CCR1 önceki periyodu (µs) verir
+- `hallProcessTransition()` ISR'da çağrılır: GPIO IDR'den hall bit'leri okunur
 - `MIN_STATE_INTERVAL_US = 40 µs` debounce: çok hızlı değişimler reddedilir
 - `INVALID_HALL_HOLD_US = 1500 µs`: geçersiz hall okunursa son geçerli durum tutulur
 - Geçersiz durum süresi aşılırsa: çıkışlar kapalı
 - `polarityMask` ile faz polaritesi, `stateOffset` ile adım kayması, `profile` ile 4 farklı hall/faz eşleştirmesi ayarlanabilir
+- TIM3 kontrol ISR'ı `Hall_ResolveState()` ile yalnızca son kabul edilen state'i tüketir (polling yapmaz)
 
 ---
 
@@ -248,7 +259,7 @@ Not: `hinv/hmask/offset/map/limits/uv/uven/gain/zeroi` komutları yalnızca `STO
 |---|---|
 | MOSFET | IRFB7730 — Vds(max)=75V, Rds(on)=3.1mΩ, Qg=137nC [DOĞRULANDI] |
 | INA181 | INA181A1QDBVRQ1 — gain=20 V/V [DOĞRULANDI] |
-| Deadtime yeterliliği | ~521 ns MCU + ~300-400 ns L6388 = ~820-920 ns — bench'te osiloskopla doğrulanmalı |
+| Deadtime yeterliliği | ~208 ns MCU + ~300-400 ns L6388 = ~508-608 ns — bench'te osiloskopla doğrulanmalı |
 | VSENSE bölücü oranı | Teorik: 0.04472 (R_top=47k, R_bot=2.2k) — bench'te doğrulanmalı |
 | Hall profili | Profil 0 varsayılan — motora göre ayarlanmalı |
 | Geri yön | Bench'te doğrulanmadı |
@@ -260,5 +271,5 @@ Not: `hinv/hmask/offset/map/limits/uv/uven/gain/zeroi` komutları yalnızca `STO
 - [ ] Phase 1: Konfigürasyon kalibrasyonu (hall, akım, duty, ramp)
 - [ ] TIM1 Break girişine harici OCP bağlantısını doğrula (BKIN opsiyonel, firmware hazır)
 - [ ] ADC örneklemeyi timer-triggered senkron moda taşı (şu an continuous DMA)
-- [ ] RPM / hız geri bildirimi (hall geçiş süresi → RPM)
+- [ ] RPM / hız geri bildirimi (hall sektör periyodundan → RPM, altyapı hazır)
 - [ ] Closed-loop PI hız kontrolü

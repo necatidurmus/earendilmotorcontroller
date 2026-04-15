@@ -91,7 +91,7 @@
 **Sorun:** Hall değişimi algılandığında bir tam ISR periyodu (~80 us) all-off. Güvenli ama kaba. `docs/control_strategy.md`'de belgelendi.
 
 ### 29. [LOW] Deadtime Yeterliliği Doğrulanmadı
-**Hesap:** ~521 ns MCU + ~300-400 ns L6388 dahili = ~820-920 ns
+**Hesap:** ~208 ns MCU + ~300-400 ns L6388 dahili = ~508-608 ns
 **Çözüm:** Osiloskopla PA8/PA7 çiftinde cross-conduction kontrolü.
 
 ## Donanım Bilgileri

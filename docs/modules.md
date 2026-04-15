@@ -12,12 +12,13 @@
 - Pin tanımları (hall, yüksek taraf, düşük taraf, ADC, LED)
 - TIM1 PWM parametreleri (frekans, periyot, deadtime)
 - TIM3 kontrol zamanlayıcısı parametreleri
+- TIM4 hall sensor interface parametreleri
 - ADC kanalları, örnekleme sabitleri
 - Duty döngüsü limitleri ve rampa adımları
 - Koruma eşikleri (soft/hard limit, strike sayısı)
 - UART baud hızı, CLI tampon boyutu
 - Hall profil sayısı ve extern bildirimi
-- HAL handle extern bildirimleri (`htim1`, `htim3`, `hadc1`, `huart2`)
+- HAL handle extern bildirimleri (`htim1`, `htim3`, `htim4`, `hadc1`, `huart2`)
 
 Donanım değişirse veya parametre ayarlanacaksa **yalnızca bu dosyaya bakılır**.
 
@@ -33,15 +34,17 @@ Dışarıya açılan fonksiyonlar:
 |---|---|
 | `BoardIO_InitAll()` | Tüm alt sistemleri sırayla başlatır |
 | `BoardIO_InitClock()` | 25 MHz HSE → 96 MHz SYSCLK PLL kurar |
-| `BoardIO_InitGPIO()` | LED, hall pinleri |
+| `BoardIO_InitGPIO()` | LED pin yapılandırması |
 | `BoardIO_InitPWM()` | TIM1 komplementer PWM (6 kanal + deadtime) |
 | `BoardIO_InitControlTimer()` | TIM3 ISR zamanlayıcısı |
 | `BoardIO_StartControlTimer()` | TIM3'ü başlatır (motor kontrolü açılır) |
-| `BoardIO_InitADC()` | PA0/PA4 analog giriş, ADC1 |
+| `BoardIO_InitHallTimer()` | TIM4 Hall Sensor Interface (PB6/PB7/PB8 AF2) |
+| `BoardIO_StartHallTimer()` | TIM4 capture interrupt'ı başlatır (Hall_Init sonrası) |
+| `BoardIO_InitADC()` | PA0/PA4 analog giriş, ADC1 DMA |
 | `BoardIO_InitUART()` | USART2 CLI (PA2/PA3) |
 | `BoardIO_SetPWMx()` | TIM1 CCR doğrudan yaz |
 | `BoardIO_AllOff()` | CCR=0, CCER=0 — güvenli durum |
-| `BoardIO_ReadADC(ch)` | Tek kanallı blocking ADC okuma |
+| `BoardIO_ReadADC(ch)` | DMA tamponundan non-blocking ADC okuma |
 | `BoardIO_LEDOn/Off/Toggle()` | LED kontrolü |
 | `BoardIO_DelayUs(us)` | DWT tabanlı µs gecikme |
 
@@ -74,18 +77,21 @@ Dışarıya açılan fonksiyonlar:
 | `Hall_SetPolarityMask(m)` | Hall XOR maskesi (polarite düzeltme) |
 | `Hall_SetStateOffset(o)` | Komütasyon durumu kaydırma (-5..+5) |
 | `Hall_GetConfig(cfg)` | Mevcut konfigürasyonu oku |
-| `Hall_ResolveState(nowUs)` | ISR çağrısı — hall oku, debounce, eşleştir, 0..5 veya 255 döndür |
-| `Hall_GetDriveState()` | Son çözümlenen sürüş durumu |
-| `Hall_SetDirection(fwd)` | Yön ayarı |
+| `Hall_ResolveState(nowUs)` | ISR çağrısı — son kabul edilen state + timeout kontrolü, 0..5 veya 255 döndür |
+| `Hall_GetDriveState()` | Diagnostik sürüş durumu (yön uygulanmış) |
+| `Hall_SetDirection(fwd)` | Yön ayarı (yalnızca diagnostik görüntüleme için) |
 | `Hall_GetSnapshot(snap)` | CLI tanı anlık görüntüsü |
 | `Hall_ReadRaw()` | Ham hall bit değeri |
 
 `HallSnapshot` yapısı:
-- `raw`: GPIO'dan okunan ham 3-bit değer
+- `raw`: GPIO IDR'den okunan ham 3-bit değer
 - `corrected`: polarityMask XOR sonrası
 - `mapped`: profil tablosundan indekslenmiş durum (0..5 veya 255)
 - `accepted`: debounce sonrası kabul edilen durum
-- `driveState`: yön ve offset uygulaması sonrası final sürüş durumu
+- `driveState`: yön uygulaması sonrası diagnostik sürüş durumu
+- `lastTransitionUs`: son hall geçiş zamanı (TIM4 zaman tabanı)
+- `sectorPeriodUs`: son geçiş aralığı (µs)
+- `stale`: timeout/stale durumu (1=geç veri)
 
 ---
 
@@ -142,10 +148,11 @@ CLI, ISR'dan bağımsız çalışır. Motor kontrol state'ini `volatile` değiş
 Hangi HAL modüllerinin derleneceğini belirler. İçeride yorum dışı bırakılan her `#define HAL_xxx_MODULE_ENABLED` satırı o modülün HAL kaynak dosyalarını derlemeye dahil eder.
 
 Bu projede aktif modüller:
-- `HAL_TIM_MODULE_ENABLED` — TIM1 ve TIM3
+- `HAL_TIM_MODULE_ENABLED` — TIM1, TIM3 ve TIM4
 - `HAL_ADC_MODULE_ENABLED` — ADC1
 - `HAL_UART_MODULE_ENABLED` — USART2
-- `HAL_GPIO_MODULE_ENABLED`, `HAL_RCC_MODULE_ENABLED`, `HAL_CORTEX_MODULE_ENABLED`, `HAL_FLASH_MODULE_ENABLED`, `HAL_PWR_MODULE_ENABLED`
+- `HAL_IWDG_MODULE_ENABLED` — Watchdog
+- `HAL_GPIO_MODULE_ENABLED`, `HAL_RCC_MODULE_ENABLED`, `HAL_CORTEX_MODULE_ENABLED`, `HAL_FLASH_MODULE_ENABLED`, `HAL_PWR_MODULE_ENABLED`, `HAL_DMA_MODULE_ENABLED`, `HAL_EXTI_MODULE_ENABLED`
 
 Kullanılmayan modüller devre dışıdır → derleme boyutu küçüktür.
 
@@ -186,8 +193,9 @@ Ana döngü: yalnızca `CLI_Service()` ve LED blink.
 
 `BoardIO_InitPWM()` bu projedeki en kritik fonksiyon:
 - PA7/PB0/PB1'i GPIO yerine TIM1_CH1N/CH2N/CH3N (AF1) olarak init eder
+- PB6/PB7/PB8'i TIM4_CH1/CH2/CH3 (AF2) olarak init eder (hall sensor interface)
 - 6 kanalı başlatır (3 yüksek taraf + 3 düşük taraf)
-- BDTR deadtime ayarlar (DEADTIME_COUNTS = 50 → ~521 ns MCU tarafı)
+- BDTR deadtime ayarlar (DEADTIME_COUNTS = 20 → ~208 ns MCU tarafı)
 - OSSR/OSSI = 1 (güvenli idle state)
 
 ---
@@ -213,14 +221,19 @@ HAL çağrısı yoktur. ISR hot path için optimize edilmiştir.
 
 ### `hall.c`
 
-**Hall sensör okuma, debounce ve profil eşleştirme implementasyonu.**
+**TIM4 event-driven hall sensor capture, debounce ve profil eşleştirme.**
 
-İşlem sırası (her `Hall_ResolveState()` çağrısında):
-1. 7× GPIO okuma → çoğunluk oyu
-2. `polarityMask` XOR uygula
-3. Profil tablosundan durum eşleştir → 0..5 veya 255
-4. Debounce: `MIN_STATE_INTERVAL_US` geçmeden durum değiştirme
-5. Geçersiz hall: `INVALID_HALL_HOLD_US` süresince son geçerli tutulur, sonra 255
+Mimari:
+- TIM4 capture interrupt her hall geçişinde tetiklenir (BOTHEDGE)
+- `HAL_TIM_IC_CaptureCallback()` çağrılır
+- `readHallRawDirect()` GPIO IDR üzerinden hall bit'lerini okur (AF modunda da geçerli)
+- Polarity mask, profil tablosu, debounce uygulanır
+- Son kabul edilen state `lastAcceptedState`'te saklanır
+
+TIM3 kontrol ISR'i `Hall_ResolveState()` ile yalnızca:
+1. Son kabul edilen state'i döndürür
+2. Timeout kontrolü yapar (`INVALID_HALL_HOLD_US`)
+3. Polling veya majority vote YAPMAZ
 
 Bu dosyada `HALL_TO_STATE_PROFILES[4][8]` tanımlıdır (motor_config.h'de extern).
 
@@ -259,7 +272,8 @@ CLI, ISR değişkenlerine yalnızca `volatile` pointer üzerinden erişir. Kriti
 
 **Kesme vektör implementasyonları.**
 
-`TIM3_IRQHandler`: TIM3 update flag'ini temizler, `MotorControl_Tick()` çağırır.
+- `TIM3_IRQHandler`: TIM3 update flag'ini temizler, `MotorControl_Tick()` çağırır.
+- `TIM4_IRQHandler`: TIM4 hall capture interrupt'ini HAL'a yönlendirir.
 
 Diğer handler'lar (`HardFault_Handler`, `SysTick_Handler` vb.) varsayılan HAL implementasyonlarıdır.
 

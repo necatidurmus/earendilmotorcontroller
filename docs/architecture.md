@@ -18,11 +18,24 @@ TIM1 (96 MHz APB2 timer saati, PSC=0)
   ARR = 3199 → PWM frekansı = 96 MHz / 3200 = 30 kHz
 
   CH1  (PA8)  ─┐
-  CH1N (PA7)  ─┤─ Komplementer çift A + DEADTIME_COUNTS = ~521 ns
+  CH1N (PA7)  ─┤─ Komplementer çift A + DEADTIME_COUNTS = ~208 ns
   CH2  (PA9)  ─┤
-  CH2N (PB0)  ─┤─ Komplementer çift B + ~521 ns
+  CH2N (PB0)  ─┤─ Komplementer çift B + ~208 ns
   CH3  (PA10) ─┤
-  CH3N (PB1)  ─┘─ Komplementer çift C + ~521 ns
+  CH3N (PB1)  ─┘─ Komplementer çift C + ~208 ns
+```
+
+## TIM4 Hall Sensor Interface
+
+```
+TIM4 (96 MHz APB1 timer saati, APB1=48 MHz x2)
+  Prescaler = 95 → 1 MHz tick (1 µs çözünürlük)
+  ARR = 0xFFFF → max ~65 ms (overflow)
+  Hall Sensor Mode (TI1S=1, SMS=Reset, TS=TI1F_ED)
+    PB6 (CH1) + PB7 (CH2) + PB8 (CH3) XOR → TI1
+    Her hall geçişinde counter sıfırlanır, CCR1 periyodu yakalar
+  IC1Polarity = BOTHEDGE → 6/6 sektör yakalanir
+  Capture IRQ → TIM4_IRQHandler → HAL_TIM_IC_CaptureCallback()
 ```
 
 ## TIM3 Kontrol Zamanlayıcısı
@@ -37,24 +50,33 @@ TIM3 (96 MHz APB1 timer saati, APB1=48 MHz x2)
 ## ISR Hot Path Akışı
 
 ```
+TIM4_IRQHandler() [hall geçişinde, event-driven]
+  │
+  └─ HAL_TIM_IC_CaptureCallback()
+       ├─ CCR1 oku → sektör periyodu (us)
+       ├─ hallEventTimeUs birikim
+       └─ hallProcessTransition()
+            ├─ readHallRawDirect() → GPIO IDR oku
+            ├─ polarity mask + profil tablosu → mapped state
+            ├─ debounce kontrolü
+            └─ lastAcceptedState / lastValidControlUs güncelle
+
 TIM3_IRQHandler() [80 µs dönem]
   │
   ├─ Prot_SampleTick()
   │    ├─ decimator++ (her 4. tick'te ADC)
-  │    ├─ BoardIO_ReadADC(ISENSE) — ~4 µs blocking (EOC timeout ~10 µs)
+  │    ├─ BoardIO_ReadADC(ISENSE) — DMA tamponundan non-blocking
   │    ├─ BoardIO_ReadADC(VSENSE)
   │    └─ EMA filtre → currentDelta güncelle
+  │
+  ├─ Hall_ResolveState(nowUs)
+  │    └─ son kabul edilen state + timeout kontrolü (polling yok)
   │
   ├─ Prot_CheckHardLimit()
   │    └─ delta >= hardLimit × 3 ardışık → Prot_LatchFault()
   │         └─ BoardIO_AllOff() + g_runMode = STOPPED
   │
   ├─ [g_runMode == STOPPED?] → Comm_AllOff(), return
-  │
-  ├─ Hall_ResolveState(nowUs)
-  │    ├─ 7× GPIO okuma → çoğunluk oyu
-  │    ├─ debounce kontrolü
-  │    └─ hallToState[profile][corrected] → state 0..5
   │
   ├─ [state > 5?] → Comm_AllOff(), return
   │
@@ -79,5 +101,6 @@ TIM3_IRQHandler() [80 µs dönem]
 
 | Kaynak | Öncelik |
 |---|---|
-| TIM3 Update (motor control) | 0 (en yüksek) |
+| TIM4 Capture (hall event) | 0 (en yüksek) |
+| TIM3 Update (motor control) | 1 |
 | SysTick (HAL_GetTick) | 15 (en düşük) |

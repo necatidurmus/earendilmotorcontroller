@@ -126,12 +126,7 @@ void BoardIO_InitGPIO(void) {
     HAL_GPIO_Init(LED_PORT, &gpio);
     HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_SET); /* SET = LED kapalı */
 
-    /* Hall pinleri başlangıçta girişe çekilir; TIM4 init içinde AF2 yapılır */
-    gpio.Pin   = HALL_A_PIN | HALL_B_PIN | HALL_C_PIN;
-    gpio.Mode  = GPIO_MODE_INPUT;
-    gpio.Pull  = GPIO_PULLUP;
-    gpio.Speed = GPIO_SPEED_FREQ_LOW;
-    HAL_GPIO_Init(HALL_A_PORT, &gpio); /* Üçü de GPIOB'de */
+    /* Hall pinleri (PB6/PB7/PB8) BoardIO_InitHallTimer() içinde TIM4 AF2 olarak yapılandırılır */
 }
 
 /* ====================================================================
@@ -152,9 +147,9 @@ void BoardIO_InitGPIO(void) {
  *
  * Deadtime hesabı:
  *   DTG[7:0] bit7=0: deadtime = DTG × tdts
- *   DEADTIME_COUNTS=50 → 50 × 10.4 ns ≈ 521 ns MCU tarafı deadtime
+ *   DEADTIME_COUNTS=20 → 20 × 10.4 ns ≈ 208 ns MCU tarafı deadtime
  *   L6388 ayrıca ~300-400 ns iç deadtime ekler
- *   Toplam efektif deadtime: ~820-920 ns (bench'te doğrula)
+ *   Toplam efektif deadtime: ~508-608 ns (bench'te doğrula)
  * ==================================================================== */
 
 void BoardIO_InitPWM(void) {
