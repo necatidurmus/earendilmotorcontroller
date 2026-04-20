@@ -1176,6 +1176,7 @@ void beginRunRequest(int8_t requestedDirection) {
       beginNeutralDirectionSwitch(requestedDirection);
       return;
     }
+    // Aynı yön — duty güncellemesi applyPendingRequests() içinde yapıldı
     return;
   }
 
@@ -2102,7 +2103,7 @@ void runMotorControlScheduler() {
 // RPM & Telemetry — Devir Hesaplama ve Veri Gönderme
 // ============================================================
 
-// RPM hesapla — hall periodundan, 6 geçiş/elektriksel tur × 15 elektriksel tur = 90 geçiş/mekanik tur
+// RPM hesapla — hall periodundan, 6 geçiş/elektriksel tur × 15 elektriksel tur/mekanik tur = 90 geçiş/mekanik tur
 uint32_t calculateRPM() {
   if (hallRt.hallPeriodUs == 0) return 0;
   if (!isMotorDriveActive()) return 0;

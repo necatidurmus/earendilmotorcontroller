@@ -83,41 +83,17 @@ IWatchdog kütüphanesi eklendi. `setup()`'ta 500ms timeout ile IWDG başlatıl�
 
 ### ISSUE-09: RPM Calculation Comment is Incorrect
 
-| Field | Detail |
-|-------|--------|
-| **Priority** | Low |
-| **Type** | Documentation Bug |
-| **File** | `src/main.cpp:2022, 2031` |
-| **Function** | `calculateRPM()` |
+**Status:** ✅ FIXED
 
-**Current Behavior:** Comment states "6 hall geçişi/elektriksel tur × 15 pole pair = 90 geçiş/mekanik tur". This is grammatically misleading.
-
-**Expected Behavior:** The correct phrasing is: "6 transitions/electrical revolution × 15 electrical revolutions/mechanical revolution = 90 transitions/mechanical revolution".
-
-**Technical Impact:** The code is correct (multiplies by 90), but the comment may confuse future developers about the relationship between pole pairs and electrical revolutions.
-
-**Evidence Status:** Verified — comment exists at the specified location.
+Comment düzeltildi: "15 pole pair" → "15 elektriksel tur/mekanik tur".
 
 ---
 
 ### ISSUE-10: `beginRunRequest` Same-Direction Duty Update is Unclear
 
-| Field | Detail |
-|-------|--------|
-| **Priority** | Low |
-| **Type** | Design Issue |
-| **File** | `src/main.cpp:1003-1010` (approximate) |
-| **Function** | `beginRunRequest()` |
+**Status:** ✅ FIXED
 
-**Current Behavior:** When motor is already driving in the same direction, `beginRunRequest()` returns early without updating duty. Duty updates rely on `pendingReq.hasTargetDutyUpdate` which is handled separately in `applyPendingRequests()`.
-
-**Expected Behavior:** The relationship between `beginRunRequest()` and duty updates should be clearer, especially for the f/b/s protocol where `f150` means "run forward at PWM 150".
-
-**Technical Impact:** With the upcoming f/b/s protocol, every `f150` command should update both direction AND duty. The current separation may cause duty updates to be missed if `pendingReq.hasTargetDutyUpdate` is not set by the command parser.
-
-**Recommended Fix:** Ensure the f/b/s command parser always sets `hasTargetDutyUpdate = true` when a duty value is provided, regardless of current direction.
-
-**Evidence Status:** Verified — code shows early return on same direction without explicit duty update.
+`beginRunRequest()` erken dönüşüne yorum eklendi: duty güncellemesi `applyPendingRequests()` içinde yapıldığı için burada tekrar gerek yok. f/b/s protokolü `hasTargetDutyUpdate` set ediyor, duty doğru işleniyor.
 
 ---
 
@@ -201,8 +177,8 @@ The following issues from the previous `problems.md` have been re-evaluated and 
 | ISSUE-06 | ✅ Fixed | Bug | main.cpp:1610 | saveall doesn't save operating mode → saveModeToStorage added |
 | ISSUE-07 | ✅ Fixed | Bug | main.cpp:74 | Identify step transition too fast (1ms) → 50ms |
 | ISSUE-08 | ✅ Fixed | Safety Risk | main.cpp:2203, 2345 | No hardware watchdog (IWDG) → IWatchdog 500ms |
-| ISSUE-09 | Low | Doc Bug | main.cpp:2110 | RPM calculation comment incorrect |
-| ISSUE-10 | Low | Design | main.cpp:1160 | beginRunRequest same-direction duty update unclear |
+| ISSUE-09 | ✅ Fixed | Doc Bug | main.cpp:2105 | RPM calculation comment corrected |
+| ISSUE-10 | ✅ Fixed | Design | main.cpp:1179 | beginRunRequest same-direction duty clarifikasyonu |
 | ISSUE-11 | ✅ Fixed | Design | main.cpp:293, 990 | Command queue has no timestamps |
 | ISSUE-12 | ✅ Fixed | Design | main.cpp (multiple) | lastMotorCommandMs update inconsistent |
 
