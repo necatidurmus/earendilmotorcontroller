@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <EEPROM.h>
+#include <IWatchdog.h>
 
 // ============================================================
 // Pins
@@ -63,6 +64,9 @@ static constexpr uint32_t TELEMETRY_INTERVAL_MS      = 100;
 static constexpr uint32_t CMD_WATCHDOG_MS             = 800;
 // Komut kuyrugunda stale kabul süresi — uzerinde ise discard
 static constexpr uint32_t CMD_STALE_MS                = 500;
+
+// Donanımsal watchdog timeout (µs) — 500ms
+static constexpr uint32_t IWDG_TIMEOUT_US             = 500000;
 
 // === Servis Modu Ayarları ===
 
@@ -2198,6 +2202,17 @@ void setup() {
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, HIGH);
 
+  // Donanımsal watchdog — IWDG reset kontrolü
+  if (IWatchdog.isReset(true)) {
+    sysLn(F("[WARN] IWDG reset detected"));
+  }
+
+  // IWDG başlat — 500ms timeout
+  IWatchdog.begin(IWDG_TIMEOUT_US);
+  if (!IWatchdog.isEnabled()) {
+    sysLn(F("[ERR] IWDG init failed"));
+  }
+
   pinMode(HALL_1_PIN, INPUT_PULLUP);
   pinMode(HALL_2_PIN, INPUT_PULLUP);
   pinMode(HALL_3_PIN, INPUT_PULLUP);
@@ -2321,4 +2336,7 @@ void loop() {
     checkCommandWatchdog(nowMs);
     checkHostConnection(nowMs);
   }
+
+  // Donanımsal watchdog yenile — loop sağlıklı çalışıyorsa
+  IWatchdog.reload();
 }

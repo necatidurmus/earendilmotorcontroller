@@ -107,8 +107,7 @@ RPM=devir, D=mevcut duty, DIR=F/R, PH=faz(0-4), PWM_SET=hedef duty, PWM_ACT=firm
 
 | Sorun | Öncelik | Durum |
 |-------|---------|-------|
-| Donanımsal watchdog yok | Yüksek | ❌ Çözülmedi |
-| Dead-time yok | Yüksek | ❌ Çözülmedi |
+| (yok) | — | Tüm kritik sorunlar çözüldü |
 
 Detay: docs/ISSUES.md
 
@@ -128,8 +127,8 @@ Faz sırası: Stabilize → f/b/s → Lease → Brake → Cleanup → Multi-Moto
 ## Güvenlik Uyarıları
 
 - Motor çalışıyor! Test sırasında fiziksel acil durdurma hazır olmalı
-- Dead-time yok — MOSFET hasarı riski, sınırlı akım kaynağı kullan
-- Donanımsal watchdog yok — firmware takılırsa motor çalışmaya devam eder
+- L6388 351ns dead-time sağlıyor — software dead-time gerekli değil
+- Donanımsal watchdog (IWDG) 500ms — firmware takılırsa MCU reset
 - Prototip — üretim için uygun değil
 
 ---

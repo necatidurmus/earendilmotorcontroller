@@ -27,28 +27,9 @@
 
 ### ISSUE-02: No Software Dead-Time in `applyDriveState`
 
-| Field | Detail |
-|-------|--------|
-| **Priority** | High (test-dependent) |
-| **Type** | Safety Risk |
-| **File** | `src/main.cpp:614-632` |
-| **Function** | `applyDriveState()` |
+**Status:** ✅ CLOSED — L6388 driver 351ns dead-time sağlıyor, software dead-time gerekli değil
 
-**Current Behavior:** When transitioning between drive states, old MOSFET pins are turned off and new pins are turned on with no delay between operations. The sequence is:
-```cpp
-if (oldH != newH) analogWrite(oldH, 0);
-if (oldL != newL) digitalWrite(oldL, LOW);
-if (oldL != newL) digitalWrite(newL, HIGH);
-analogWrite(newH, dutyCycle);
-```
-
-**Expected Behavior:** There should be a dead-time (typically 1-5µs) between turning off one MOSFET pair and turning on the next to prevent shoot-through current.
-
-**Technical Impact:** Without dead-time, there is a theoretical risk of both high-side and low-side MOSFETs conducting simultaneously during transition, causing shoot-through current, excessive heating, and potential MOSFET damage. Real-world impact depends on MOSFET driver characteristics and switching speed.
-
-**Recommended Fix:** Add `delayMicroseconds(1-5)` between off and on transitions, or use hardware dead-time MOSFET drivers.
-
-**Evidence Status:** Verified — code inspection confirms immediate switching with no delay. Real-world impact requires hardware testing.
+Backup kod karşılaştırması: mevcut ve backup aynı `applyDriveState()` koduna sahip, motorlar sorunsuz çalışmış. L6388 half-bridge driver donanımsal dead-time sağladığı için software dead-time eklemek gereksiz ve duty kaybına neden olur.
 
 ---
 
@@ -94,22 +75,9 @@ Normal modda `PWM_ACT:` (firmware target duty), Python modda `PWM_SET:` (host se
 
 ### ISSUE-08: No Hardware Watchdog (IWDG)
 
-| Field | Detail |
-|-------|--------|
-| **Priority** | High (safety) |
-| **Type** | Safety Risk |
-| **File** | Entire project |
-| **Function** | N/A — feature missing |
+**Status:** ✅ FIXED (v0.5.1)
 
-**Current Behavior:** No IWDG (Independent Watchdog) initialization or feeding anywhere in the code. Only software watchdog (`CMD_WATCHDOG_MS = 800`) exists, which is disabled in Python mode.
-
-**Expected Behavior:** A hardware watchdog should be present as a second safety layer. If the firmware hangs (e.g., in a tight loop, ISR deadlock, or memory corruption), the IWDG will reset the MCU and turn off all motor outputs.
-
-**Technical Impact:** If the firmware enters an unrecoverable state (stack overflow, infinite loop, ISR deadlock), the motor may continue running at whatever duty was last applied. The software watchdog cannot help if the main loop is stuck.
-
-**Recommended Fix:** Initialize IWDG with a timeout (e.g., 500ms) in `setup()`, feed it in `loop()`. This provides a hardware-level failsafe independent of the software watchdog.
-
-**Evidence Status:** Verified — no `#include <IWDG.h>`, no `IWDG` references found in the entire codebase.
+IWatchdog kütüphanesi eklendi. `setup()`'ta 500ms timeout ile IWDG başlatılıyor. `loop()` sonunda `IWatchdog.reload()` çağrılıyor. IWDG reset tespit edilirse loglanıyor. Main loop 500ms'den fazla takılırsa MCU otomatik reset atar.
 
 ---
 
@@ -226,13 +194,13 @@ The following issues from the previous `problems.md` have been re-evaluated and 
 | ID | Priority | Type | File | Summary |
 |----|----------|------|------|---------|
 | ISSUE-01 | ✅ Fixed | Bug | main.cpp | Queue processes only 1 command/iteration → if→while |
-| ISSUE-02 | High | Safety Risk | main.cpp:629-633 | No software dead-time in drive transitions |
+| ISSUE-02 | ✅ Closed | Safety | main.cpp:629-633 | L6388 351ns dead-time var, software gerekli değil |
 | ISSUE-03 | ✅ Fixed | Safety Risk | main.cpp:2303 | Watchdog disabled in Python mode |
 | ISSUE-04 | ✅ Fixed | Design | main.cpp:133 | Default PWM hardcoded to 60 → EEPROM configurable (150) |
 | ISSUE-05 | ✅ Fixed | Design | main.cpp:1950 | Telemetry "PWM" field → PWM_SET/PWM_ACT + backward compat |
 | ISSUE-06 | ✅ Fixed | Bug | main.cpp:1610 | saveall doesn't save operating mode → saveModeToStorage added |
 | ISSUE-07 | ✅ Fixed | Bug | main.cpp:74 | Identify step transition too fast (1ms) → 50ms |
-| ISSUE-08 | High | Safety Risk | Entire project | No hardware watchdog (IWDG) |
+| ISSUE-08 | ✅ Fixed | Safety Risk | main.cpp:2203, 2345 | No hardware watchdog (IWDG) → IWatchdog 500ms |
 | ISSUE-09 | Low | Doc Bug | main.cpp:2110 | RPM calculation comment incorrect |
 | ISSUE-10 | Low | Design | main.cpp:1160 | beginRunRequest same-direction duty update unclear |
 | ISSUE-11 | ✅ Fixed | Design | main.cpp:293, 990 | Command queue has no timestamps |
