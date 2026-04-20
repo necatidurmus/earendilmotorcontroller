@@ -19,22 +19,9 @@
 
 ### ISSUE-01: Command Queue Processes Only 1 Command Per Loop
 
-| Field | Detail |
-|-------|--------|
-| **Priority** | Critical |
-| **Type** | Bug |
-| **File** | `src/main.cpp:1689-1694`, `src/main.cpp:1853-1858` |
-| **Function** | `processQueuedCommands()`, `processPythonQueuedCommands()` |
+**Status:** ✅ FIXED (v0.3.0)
 
-**Current Behavior:** Both functions use `if (dequeueCommand(&item))` which processes only one command per loop iteration. If multiple commands are queued, they accumulate and are processed one per loop cycle.
-
-**Expected Behavior:** All queued commands should be drained within a single loop iteration.
-
-**Technical Impact:** Under rapid command input or when motor control tick consumes significant time, the command queue fills up. Commands may be processed with increasing latency. In worst case, queue overflow occurs and commands are dropped (`queueOverflowFlag`).
-
-**Recommended Fix:** Change `if` to `while` in both functions to drain the queue completely per iteration.
-
-**Evidence Status:** Verified — code inspection confirms `if` instead of `while` at both locations.
+`processQueuedCommands()` ve `processPythonQueuedCommands()` içinde `if` → `while` değiştirildi. `CMD_QUEUE_LEN` (8) budget ile loop starvation önlendi.
 
 ---
 
@@ -67,110 +54,41 @@ analogWrite(newH, dutyCycle);
 
 ### ISSUE-03: Watchdog Disabled in Python Mode
 
-| Field | Detail |
-|-------|--------|
-| **Priority** | High (safety) |
-| **Type** | Safety Risk |
-| **File** | `src/main.cpp:2188-2198` |
-| **Function** | `loop()` — Python mode branch |
+**Status:** ✅ FIXED (v0.3.0)
 
-**Current Behavior:** The `checkCommandWatchdog()` function is called in Normal and Settings modes but NOT in Python mode. The code comment explicitly states: "Python modunda watchdog yok — motor X ile durdurana kadar çalışır".
-
-**Expected Behavior:** A watchdog mechanism should be active in all modes to ensure the motor stops if the host becomes unresponsive.
-
-**Technical Impact:** If the Python host crashes, the serial connection drops, or the host freezes, the motor will continue running indefinitely at its last commanded duty. Only a power cycle or manual intervention can stop it. This is a safety hazard for unattended operation.
-
-**Recommended Fix:** Enable `checkCommandWatchdog()` in Python mode as well. The lease-based heartbeat from Python (every ~600ms) combined with an 800ms watchdog timeout provides a safe failsafe.
-
-**Evidence Status:** Verified — `loop()` function confirms watchdog is absent in Python mode branch. The `CMD_WATCHDOG_MS = 800` constant and `checkCommandWatchdog()` function exist and work correctly in Normal/Settings modes.
+`loop()` Python branch'te `checkCommandWatchdog(nowMs)` eklendi. `processPythonCommand()` içinde `w` ve `s` komutları `lastMotorCommandMs = millis()` ile lease yeniliyor. Python host ~600ms heartbeat ile watchdog timeout (800ms) öncesinde komut göndermeli.
 
 ---
 
 ### ISSUE-04: Default PWM Value is 60, Not Configurable
 
-| Field | Detail |
-|-------|--------|
-| **Priority** | Medium |
-| **Type** | Design Inconsistency |
-| **File** | `src/main.cpp:271`, `src/main.cpp:1648` |
-| **Function** | Global declaration, `processCommand()` — mode python handler |
+**Status:** ✅ FIXED (v0.3.0)
 
-**Current Behavior:** `pythonPwmValue` is hardcoded to 60 at startup and when entering Python mode. The value is not stored in EEPROM or configurable.
-
-**Expected Behavior:** Default PWM should be configurable (target: 150) and ideally persistent across reboots via EEPROM.
-
-**Technical Impact:** Users must manually adjust PWM every time they enter Python mode. The low default (60) may be insufficient for some motors, while 150 may be too high for others. A configurable default improves usability.
-
-**Recommended Fix:** Add `defaultPwm` field to `SavedConfig`, load it on startup, and use it as the initial `pythonPwmValue`.
-
-**Evidence Status:** Verified — code confirms `pythonPwmValue = 60` at declaration and in mode switch handler.
+`SavedConfig` struct'una `defaultPwm` alanı eklendi. EEPROM'dan yükleniyor. Varsayılan değer 150. `defpwm <0-255>` CLI komutu ile ayarlanabilir. `savecfg`/`saveall` ile persist ediliyor.
 
 ---
 
 ### ISSUE-05: Telemetry Field "PWM" Has Different Semantics Per Mode
 
-| Field | Detail |
-|-------|--------|
-| **Priority** | Medium |
-| **Type** | Design Inconsistency |
-| **File** | `src/main.cpp:2053-2054`, `src/main.cpp:1878-1879` |
-| **Function** | `sendTelemetry()`, `sendPythonTelemetry()` |
+**Status:** ✅ FIXED (v0.3.0)
 
-**Current Behavior:**
-- Normal mode `sendTelemetry()`: "PWM" field sends `motorRt.targetDuty` (firmware's target duty)
-- Python mode `sendPythonTelemetry()`: "PWM" field sends `pythonPwmValue` (Python host's set value)
-
-Both use the same field name "PWM" but with different meanings.
-
-**Expected Behavior:** The telemetry protocol should use consistent field names and meanings across modes, or use distinct field names when values differ.
-
-**Technical Impact:** If a telemetry consumer parses "PWM" expecting consistent semantics, it will get confused. The Python host controller happens to work because it only runs in Python mode, but future multi-motor hosts may misinterpret the data.
-
-**Recommended Fix:** Use "PWM_SET" for the host-commanded value and "PWM_ACT" for the firmware's actual target duty. Or unify the semantics.
-
-**Evidence Status:** Verified — code inspection confirms different values assigned to "PWM" field in different mode functions.
+Normal modda `PWM_ACT:` (firmware target duty), Python modda `PWM_SET:` (host set value) + `PWM_ACT:` eklendi. Backward compat için `PWM:` alanı her iki modda da korunuyor. Python host `PWM_SET` öncelikli parse yapıyor.
 
 ---
 
 ### ISSUE-06: `saveall` Command Does Not Save Operating Mode
 
-| Field | Detail |
-|-------|--------|
-| **Priority** | Medium |
-| **Type** | Bug |
-| **File** | `src/main.cpp:1538-1552` (approximate, in processCommand) |
-| **Function** | `processCommand()` — saveall handler |
+**Status:** ✅ FIXED (v0.3.0)
 
-**Current Behavior:** The `saveall` command saves hall map and config to EEPROM but does not call `saveModeToStorage()`. The current operating mode is not persisted.
-
-**Expected Behavior:** `saveall` should save all persistent state including the operating mode.
-
-**Technical Impact:** After `saveall` and reboot, the device reverts to Normal mode instead of staying in the previously active mode (Python or Settings).
-
-**Recommended Fix:** Add `saveModeToStorage()` call to the `saveall` handler.
-
-**Evidence Status:** Verified — code inspection confirms `saveall` calls `saveHallMapToStorage()` and `saveConfigToStorage()` but not `saveModeToStorage()`.
+`saveall` handler'ına `saveModeToStorage()` çağrısı eklendi. Artık hall map + config + mode birlikte persist ediliyor. Çıktıya `mode=OK/FAIL` bilgisi eklendi.
 
 ---
 
 ### ISSUE-07: Identify Step Transition Too Fast
 
-| Field | Detail |
-|-------|--------|
-| **Priority** | Medium |
-| **Type** | Bug |
-| **File** | `src/main.cpp:1326` (approximate, in updateServiceIdentify) |
-| **Function** | `updateServiceIdentify()` |
+**Status:** ✅ FIXED (v0.3.0)
 
-**Current Behavior:** `serviceRt.nextActionMs = now + IDENTIFY_TOGGLE_MS` where `IDENTIFY_TOGGLE_MS = 1`. The step transitions happen every 1ms.
-
-**Expected Behavior:** Motor needs physical settling time between steps. 1ms is insufficient for the motor to physically respond.
-
-**Technical Impact:** Identify may produce invalid or inconsistent hall maps because the motor hasn't physically moved to the next commutation step before the hall is read.
-
-**Recommended Fix:** Increase `IDENTIFY_TOGGLE_MS` to at least 50-100ms, or add a separate settling delay constant.
-
-**Evidence Status:** Verified — code and constant definition confirm 1ms step transition.
+`IDENTIFY_TOGGLE_MS` 1ms → 50ms. Yeni `IDENTIFY_STEP_INTERVAL_MS` (50ms) sabiti eklendi. Step geçişleri artık motorun fiziksel yanıt verebileceği sürede gerçekleşiyor.
 
 ---
 
@@ -258,22 +176,9 @@ Both use the same field name "PWM" but with different meanings.
 
 ### ISSUE-12: `lastMotorCommandMs` Update Inconsistency
 
-| Field | Detail |
-|-------|--------|
-| **Priority** | Low |
-| **Type** | Design Inconsistency |
-| **File** | `src/main.cpp` (multiple locations in processCommand, processPythonCommand) |
-| **Function** | `processCommand()`, `processPythonCommand()` |
+**Status:** ✅ FIXED (v0.3.0)
 
-**Current Behavior:** `lastMotorCommandMs` is updated in some command handlers (f/b in processCommand, w/s/d/a in processPythonCommand) but not consistently. Some non-motion commands that should reset the watchdog timer don't update it.
-
-**Expected Behavior:** Any valid command should refresh the lease/timestamp to indicate "host is alive". Alternatively, only motion commands should refresh it — but the policy should be explicit.
-
-**Technical Impact:** With the watchdog enabled, a host sending only non-motion commands (e.g., repeated "status" queries) while the motor is running would cause a watchdog stop.
-
-**Recommended Fix:** Define a clear policy: either all commands refresh the lease, or only motion commands do. Document the chosen policy.
-
-**Evidence Status:** Verified — code inspection shows `lastMotorCommandMs` is set in some handlers but not others.
+Python modunda `w` ve `s` komutlarına `lastMotorCommandMs = millis()` eklendi. Normal modda `pwm <val>` komutuna da eklendi. `s` komutu `lastMotorCommandMs = 0` yapıyor (watchdog devre dışı bırakma), bu davranış tutarlı. Tüm motion komutları lease yeniliyor.
 
 ---
 
@@ -337,13 +242,13 @@ The following issues from the previous `problems.md` have been re-evaluated and 
 
 | ID | Priority | Type | File | Summary |
 |----|----------|------|------|---------|
-| ISSUE-01 | Critical | Bug | main.cpp:1689, 1853 | Queue processes only 1 command/iteration |
+| ISSUE-01 | ✅ Fixed | Bug | main.cpp:1689, 1853 | Queue processes only 1 command/iteration → if→while |
 | ISSUE-02 | High | Safety Risk | main.cpp:614-632 | No software dead-time in drive transitions |
 | ISSUE-03 | High | Safety Risk | main.cpp:2188-2198 | Watchdog disabled in Python mode |
-| ISSUE-04 | Medium | Design | main.cpp:271, 1648 | Default PWM hardcoded to 60, not configurable |
-| ISSUE-05 | Medium | Design | main.cpp:2053, 1878 | Telemetry "PWM" field has different semantics per mode |
-| ISSUE-06 | Medium | Bug | main.cpp:1538-1552 | saveall doesn't save operating mode |
-| ISSUE-07 | Medium | Bug | main.cpp:1326 | Identify step transition too fast (1ms) |
+| ISSUE-04 | ✅ Fixed | Design | main.cpp:271, 1648 | Default PWM hardcoded to 60 → EEPROM configurable (150) |
+| ISSUE-05 | ✅ Fixed | Design | main.cpp:2053, 1878 | Telemetry "PWM" field → PWM_SET/PWM_ACT + backward compat |
+| ISSUE-06 | ✅ Fixed | Bug | main.cpp:1538-1552 | saveall doesn't save operating mode → saveModeToStorage added |
+| ISSUE-07 | ✅ Fixed | Bug | main.cpp:1326 | Identify step transition too fast (1ms) → 50ms |
 | ISSUE-08 | High | Safety Risk | Entire project | No hardware watchdog (IWDG) |
 | ISSUE-09 | Low | Doc Bug | main.cpp:2022 | RPM calculation comment incorrect |
 | ISSUE-10 | Low | Design | main.cpp:1003-1010 | beginRunRequest same-direction duty update unclear |

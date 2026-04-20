@@ -185,7 +185,7 @@ class MotorController:
             pass
 
     def _parse_telemetry(self, line):
-        """RPM:0,D:0,DIR:F,PH:0,PWM:60,PDIR:0"""
+        """RPM:0,D:0,DIR:F,PH:0,PWM_SET:60,PWM_ACT:0,PWM:60,PDIR:0"""
         try:
             for part in line.split(","):
                 if ":" not in part:
@@ -200,13 +200,18 @@ class MotorController:
                 elif key == "PH":
                     ph = int(val)
                     self.phase = ph
-                    phases = ["STOPPED", "KICK", "RUNNING", "NEUTRAL", "FAULT"]
+                    phases = ["STOPPED", "KICK", "RUNNING", "NEUTRAL_WAIT", "FAULT"]
                     self.phase_name = phases[ph] if ph < len(phases) else "?"
-                elif key == "PWM":
+                elif key == "PWM_SET":
                     self.pwm_set = int(val)
+                elif key == "PWM_ACT":
+                    self.duty = int(val)
+                elif key == "PWM":
+                    # Backward compat: PWM_SET yoksa PWM kullan
+                    if "PWM_SET" not in line:
+                        self.pwm_set = int(val)
                 elif key == "PDIR":
                     self.fw_direction = int(val)
-                    # Firmware direction ile senkronize et
                     self.direction = self.fw_direction
         except (ValueError, IndexError):
             pass

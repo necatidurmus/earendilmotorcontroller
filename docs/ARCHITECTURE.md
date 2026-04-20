@@ -1,9 +1,10 @@
 # ARCHITECTURE — BLDC Motor Driver Module
 
-> **Version:** 0.1
+> **Version:** 0.2
 > **Target MCU:** STM32 Black Pill F411CE
 > **Motor Type:** Sensor-based BLDC (3 Hall sensors)
 > **Communication:** UART (115200 baud)
+> **Architecture:** Timer/event-based async, stop≠brake separation, multi-motor readiness
 
 ---
 
@@ -16,7 +17,7 @@ This project is a **single-motor BLDC driver module** that:
 - Provides telemetry feedback via UART
 - Is designed as a building block for a 4-motor skid-steer vehicle
 
-The module operates independently. Multiple modules are connected to a hub STM32 (separate project) which multiplexes commands from a Python host.
+The module operates independently. Multiple modules connect to a hub STM32 (separate project) which multiplexes commands from a Python host.
 
 ---
 
@@ -24,25 +25,38 @@ The module operates independently. Multiple modules are connected to a hub STM32
 
 ### 2.1 Hardware
 
-| Component | Description |
-|-----------|-------------|
-| MCU | STM32F411CE (Black Pill) |
-| Motor | 3-phase BLDC with 3 Hall sensors |
-| MOSFET Driver | 6x N-channel MOSFET (AH, AL, BH, BL, CH, CL) |
-| Hall Sensors | 3x digital Hall sensors (H1, H2, H3) |
-| Communication | UART (PA2 TX, PA3 RX) + USB Serial |
-| Status LED | PC13 (active low) |
+| Component | Specification | Designator |
+|-----------|---------------|------------|
+| MCU | STM32F411CE (Black Pill V3) | — |
+| Motor | 3-phase BLDC with 3 Hall sensors | — |
+| Gate Drivers | 3× L6388ED013TR (half-bridge) | U8, U9, U10 |
+| MOSFETs | 6× IRFB7730 N-channel | — |
+| Current Sense | 0.5mΩ shunt + INA181A1 (20V/V) | R9, U2 |
+| Voltage Sense | Resistive divider (47kΩ / 2.2kΩ) | R12, R13 |
+| Gate Resistors | 22Ω per MOSFET | R14–R19 |
+| Bootstrap | 1µF cap + diode per phase | C1–C3, D2–D4 |
+| Bus Capacitors | 2× 470µF bulk + 2× 100µF support | C4, C5, C21, C22 |
+| Regulation | L7805 (5V), Black Pill provides 3.3V | U11 |
+| Protection | Fuse + TVS | J3, D1 |
+| Hall Conditioning | Pull-up + series network | R1–R6, R10, R11 |
+| Throttle Input | Analog filter (47kΩ/47kΩ/22nF) — hardware present | J1, R7, R8, C9 |
+| Communication | UART (PA2 TX, PA3 RX) + USB Serial | — |
+| Status LED | PC13 (active low) | — |
 
 ### 2.2 Pin Map
 
-| Pin | Function |
-|-----|----------|
-| PB6, PB7, PB8 | Hall sensors (H1, H2, H3) — INPUT_PULLUP |
-| PA8, PA7 | Phase A high/low (AH, AL) |
-| PA9, PB0 | Phase B high/low (BH, BL) |
-| PA10, PB1 | Phase C high/low (CH, CL) |
-| PC13 | Status LED |
-| PA2, PA3 | UART TX, RX (CMD serial) |
+| Pin | Function | Block |
+|-----|----------|-------|
+| PB6, PB7, PB8 | Hall sensors (H1, H2, H3) — INPUT_PULLUP | Hall input |
+| PA8, PA7 | Phase A high/low (AH, AL) | Gate driver |
+| PA9, PB0 | Phase B high/low (BH, BL) | Gate driver |
+| PA10, PB1 | Phase C high/low (CH, CL) | Gate driver |
+| PA0 | ISENSE — current measurement (INA181A1 output) | Analog |
+| PA4 | VSENSE — DC bus voltage measurement | Analog |
+| PC13 | Status LED | — |
+| PA2, PA3 | UART TX, RX (CMD serial) | Communication |
+
+**Note:** Current sense (PA0) and voltage sense (PA4) are available on hardware but not yet used in firmware. These are planned for Phase 5+ (brake current protection) and future closed-loop control.
 
 ### 2.3 Software
 
@@ -53,323 +67,506 @@ The module operates independently. Multiple modules are connected to a hub STM32
 
 ---
 
-## 3. Firmware Layer
-
-### 3.1 Architecture Overview
+## 2.4 Hardware Signal Flow
 
 ```
-┌─────────────────────────────────────────────────┐
-│                    main.cpp                      │
-│                                                  │
-│  ┌──────────┐  ┌──────────┐  ┌───────────────┐  │
-│  │ UART RX  │  │ Command  │  │ Motor Control │  │
-│  │ Ring Buf │→│  Queue   │→│  (60µs tick)  │  │
-│  └──────────┘  └──────────┘  └───────────────┘  │
-│                                                  │
-│  ┌──────────┐  ┌──────────┐  ┌───────────────┐  │
-│  │  Hall    │  │ Power    │  │  Telemetry    │  │
-│  │  ISR     │→│  Stage   │  │  (100ms)      │  │
-│  └──────────┘  └──────────┘  └───────────────┘  │
-│                                                  │
-│  ┌──────────┐  ┌──────────┐  ┌───────────────┐  │
-│  │  EEPROM  │  │ Watchdog │  │  Service      │  │
-│  │  Storage │  │ (800ms)  │  │  Tasks        │  │
-│  └──────────┘  └──────────┘  └───────────────┘  │
-└─────────────────────────────────────────────────┘
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│  Host/PC    │────▶│  STM32F411  │────▶│ L6388 Gate  │
+│  (UART/USB) │     │  (MCU)      │     │   Drivers   │
+└─────────────┘     └──────┬──────┘     └──────┬──────┘
+                           │                    │
+                    ┌──────▼──────┐     ┌──────▼──────┐
+                    │ Hall Sensors│     │ 6× IRFB7730 │
+                    │ (PB6/7/8)  │     │  MOSFETs    │
+                    └──────┬──────┘     └──────┬──────┘
+                           │                    │
+                    ┌──────▼──────┐     ┌──────▼──────┐
+                    │ Current     │     │ Motor Phases│
+                    │ Sense (PA0) │     │ A/B/C       │
+                    └─────────────┘     └─────────────┘
 ```
 
-### 3.2 Execution Flow (loop())
+### 2.5 Hardware Components Detail
 
-```
-loop() {
-  1. runMotorControlScheduler()    // 60µs motor tick (highest priority)
-  2. uartDrainToRing(USB)          // collect USB serial data
-  3. uartDrainToRing(CMD)          // collect UART data
-  4. processRxRingToLines(USB)     // parse lines from USB ring buffer
-  5. processRxRingToLines(CMD)     // parse lines from UART ring buffer
-  6. mode-specific processing:
-     - Python mode: processPythonQueuedCommands()
-     - Normal/Settings: processQueuedCommands()
-  7. updateServiceTask()           // scan/test/identify
-  8. sendTelemetry()               // send telemetry (mode-dependent)
-  9. checkCommandWatchdog()        // software watchdog (Normal/Settings only)
+| Component | Specification | Notes |
+|-----------|---------------|-------|
+| MCU | STM32F411CE (Black Pill V3) | 100MHz Cortex-M4 |
+| Gate Drivers | 3× L6388ED013TR | Half-bridge, bootstrap high-side |
+| MOSFETs | 6× IRFB7730 N-channel | High-current capability |
+| Current Sense | 0.5mΩ shunt + INA181A1 (20V/V) | PA0 ADC |
+| Voltage Sense | Resistive divider (47kΩ/2.2kΩ) | PA4 ADC |
+| Gate Resistors | 22Ω per MOSFET | R14-R19 |
+| Bus Capacitors | 2×470µF + 2×100µF | DC bus filtering |
+| Bootstrap | 1µF caps + diodes per phase | High-side gate drive |
+| Protection | Fuse + TVS diode | Input protection |
+| Regulation | L7805 → 5V, Black Pill → 3.3V | Power rails |
+
+### 2.6 Pin Map (Complete)
+
+| Pin | Function | Block | Status |
+|-----|----------|-------|--------|
+| PB6, PB7, PB8 | Hall sensors (H1, H2, H3) | Hall input | Active |
+| PA8, PA7 | Phase A high/low (AH, AL) | Gate driver | Active |
+| PA9, PB0 | Phase B high/low (BH, BL) | Gate driver | Active |
+| PA10, PB1 | Phase C high/low (CH, CL) | Gate driver | Active |
+| PA0 | ISENSE (current measurement) | Analog | Hardware ready, firmware TBD |
+| PA4 | VSENSE (voltage measurement) | Analog | Hardware ready, firmware TBD |
+| PA2, PA3 | UART TX, RX | Communication | Active |
+| PC13 | Status LED | Indicator | Active |
+
+### 2.7 Hardware Capabilities vs Firmware Status
+
+| Capability | Hardware | Firmware | Notes |
+|------------|----------|----------|-------|
+| 6-step commutation | ✅ Ready | ✅ Active | Core function |
+| Hall sensing | ✅ Ready | ✅ Active | PB6/7/8 with conditioning |
+| PWM drive | ✅ Ready | ✅ Active | 8kHz target, 8-bit |
+| Current measurement | ✅ Ready (PA0) | ❌ Not used | INA181A1 + 0.5mΩ shunt |
+| Voltage measurement | ✅ Ready (PA4) | ❌ Not used | Resistive divider |
+| Brake (low-side short) | ✅ Possible | 🔲 Planned (Phase 4) | All low-side MOSFETs on |
+| Dead-time protection | ✅ L6388 internal | ⚠️ Not tested | Gate driver has internal DT |
+| Throttle input | ✅ Ready (J1) | ❌ Not used | Analog filter present |
+
+---
+
+## 3. Why Timer/Event-Based Async Architecture?
+
+### 3.1 The Design Choice
+
+Even though the firmware uses asynchronous 6-step commutation (Hall-driven), the **timer-based control scheduler architecture is preserved and protected**. This is not a contradiction — it's a deliberate design decision.
+
+### 3.2 What "Async 6-Step" Means Here
+
+The commutation is asynchronous in the sense that:
+- Hall sensor changes trigger state transitions
+- The motor doesn't follow a fixed timing pattern
+- Commutation adapts to actual motor speed
+
+### 3.3 What "Timer/Event-Based Architecture" Preserves
+
+Despite async commutation, the following timing guarantees are maintained:
+
+| Layer | Timing | Purpose |
+|-------|--------|---------|
+| PWM generation | Timer-based (hardware PWM peripheral) | Consistent switching frequency |
+| Hall sensing | Event-driven (ISR on pin change) | Fast response, low latency |
+| Control logic | Scheduler-based (60µs tick) | Predictable execution order |
+| UART processing | Main loop (non-blocking) | Doesn't interfere with motor control |
+
+### 3.4 Why This Separation Matters
+
+**Without separation:**
+- UART parsing could delay commutation → motor stutters or miscommutates
+- Command processing could block the control tick → timing violations
+- 4-motor coordination would be impossible → no timing predictability
+
+**With separation:**
+- Motor control runs first, guaranteed every 60µs
+- UART processing runs after motor control, with bounded execution time
+- Each layer has clear timing characteristics
+- 4-motor scaling is feasible (each driver has its own scheduler)
+
+### 3.5 Code Evidence
+
+The separation is already implemented in `loop()`:
+```cpp
+void loop() {
+  // 1. Motor control FIRST — highest priority, time-critical
+  runMotorControlScheduler();
+  
+  // 2. UART collection — non-blocking ring buffer fill
+  uartDrainToRing(Serial, usbRx);
+  uartDrainToRing(CMD, cmdRx);
+  
+  // 3. Line parsing — bounded execution (64 chars max per call)
+  processRxRingToLines(usbRx, usbCli, CommandSource::USB);
+  processRxRingToLines(cmdRx, cmdCli, CommandSource::UART);
+  
+  // 4. Command processing — mode-specific
+  // ... (after motor control is done)
 }
 ```
 
-### 3.3 Motor Control Tick (60µs)
+---
+
+## 4. UART Hot Path Separation
+
+### 4.1 How UART Is Kept Outside the Hot Path
+
+UART processing never directly drives MOSFETs. The data flow is:
+
+```
+UART RX → Ring Buffer → Line Parser → Command Queue → Command Processor → pendingReq → Control Tick → MOSFET
+```
+
+**Key separation points:**
+1. **Ring buffer** absorbs UART data without blocking
+2. **Command queue** stores parsed commands without executing them
+3. **pendingReq** struct holds intent, not action
+4. **Control tick** applies changes atomically
+
+### 4.2 Intent vs Action
+
+| Stage | What Happens | Where |
+|-------|--------------|-------|
+| UART receives "f150" | Character stored in ring buffer | `uartDrainToRing()` |
+| Line complete | "f150" string queued | `enqueueCommand()` |
+| Command processed | Intent stored: `hasRunRequest=true, runDirection=1, targetDuty=150` | `processCommand()` |
+| Control tick runs | Intent applied: `beginRunRequest()` + `applyDriveState()` | `motorControlTick()` |
+
+The command processor never calls `analogWrite()` or `digitalWrite()` directly. It only sets flags in `pendingReq`. The control tick reads these flags and applies changes.
+
+### 4.3 Why This Matters for Multi-Motor
+
+In a 4-motor system:
+- Hub STM32 sends commands to 4 motors simultaneously
+- Each motor driver's UART receiver is independent
+- Each motor driver's control tick is independent
+- No cross-motor timing dependencies
+
+If UART processing directly drove MOSFETs, command timing would directly affect commutation timing — unacceptable for multi-motor coordination.
+
+---
+
+## 5. Hall ISR Role
+
+### 5.1 Current Implementation
+
+```cpp
+void hallISR() {
+  isr_rawHall = forceReadRawHall();  // Read 3 pins → 3-bit value
+  isr_hallTimeUs = micros();          // Timestamp
+  isr_hallEvent = true;               // Set flag
+}
+```
+
+**Characteristics:**
+- **Lightweight:** Only reads 3 pins + sets 2 variables
+- **No computation:** No debounce, no validation, no state lookup
+- **No MOSFET control:** Never calls analogWrite/digitalWrite
+- **Flag-based:** Main loop processes the flag, not the ISR
+
+### 5.2 Why ISR Must Be Light
+
+| Concern | Impact |
+|---------|--------|
+| ISR latency | If ISR takes too long, motor control tick may be delayed |
+| Stacking | If Hall changes faster than ISR can process, events are lost |
+| Determinism | ISR should have bounded, predictable execution time |
+| Multi-motor | Multiple motors with heavy ISRs could cause CPU starvation |
+
+### 5.3 Main Loop Processing
+
+The main loop reads the ISR flag in `updateHallRuntime()`:
+1. Reads `isr_hallEvent` flag (with interrupts disabled)
+2. Reads `isr_rawHall` and `isr_hallTimeUs`
+3. Clears the flag
+4. If no ISR event: reads Hall directly (fallback)
+5. Debounces: requires 2 consecutive same readings
+6. Validates: checks mapped state, checks transition validity
+7. Updates RPM period calculation
+
+This separation ensures the ISR stays light while the main loop handles complex logic.
+
+---
+
+## 6. Control Tick Responsibilities
+
+### 6.1 What the Control Tick Does
 
 ```
 motorControlTick(nowUs) {
-  1. updateHallRuntime()           // debounce, validate hall state
-  2. applyPendingRequests()        // apply deferred commands
-  3. phase check:
+  1. updateHallRuntime()           // Process Hall state (debounce, validate)
+  2. applyPendingRequests()        // Apply deferred commands (run, stop, duty)
+  3. Phase check:
      - Stopped/Fault: allOff()
      - NeutralWait: check release timer
      - Kick/Running: proceed
-  4. timeout check                 // startup no-hall fault
-  5. transition spam check         // illegal hall transitions
-  6. kick phase check              // kick timeout → running
-  7. updateDutyState()             // ramp duty toward target
-  8. electrical state lookup       // hall → commutation state
-  9. applyDriveState()             // drive MOSFETs
+  4. Timeout check                 // Startup no-hall fault
+  5. Transition spam check         // Illegal hall transitions
+  6. Kick phase check              // Kick timeout → running
+  7. updateDutyState()             // Ramp duty toward target
+  8. Electrical state lookup       // Hall → commutation state
+  9. applyDriveState()             // Drive MOSFETs
 }
 ```
 
-### 3.4 Motor State Machine
+### 6.2 What the Control Tick Should NOT Do
 
-```
-                    ┌───────────┐
-                    │  Stopped  │←────────────────────┐
-                    └─────┬─────┘                     │
-                          │ f/b command                │ stop command
-                    ┌─────▼─────┐                     │
-                    │   Kick    │ (optional)           │
-                    └─────┬─────┘                     │
-                          │ kickMs timeout             │
-                    ┌─────▼─────┐                     │
-                    │  Running  │─────────────────────┤
-                    └─────┬─────┘                     │
-                          │ direction change           │
-                    ┌─────▼─────┐                     │
-                    │NeutralWait│                     │
-                    └─────┬─────┘                     │
-                          │ DIRECTION_NEUTRAL_MS       │
-                    ┌─────▼─────┐                     │
-                    │   Kick    │ (new direction)      │
-                    └───────────┘                     │
-                                                      │
-                    ┌───────────┐                     │
-                    │   Fault   │─────────────────────┘
-                    └───────────┘  (allOff)
-```
+| ❌ Should NOT | Why |
+|--------------|-----|
+| Parse UART | Blocking, unpredictable timing |
+| Process commands | May call heavy functions |
+| Send telemetry | I/O operation, non-deterministic |
+| EEPROM writes | Blocking, long duration |
+| Service tasks | Scan/test/identify are slow |
 
-**Phase Descriptions:**
+### 6.3 Timing Guarantee
 
-| Phase | Description | Duration |
-|-------|-------------|----------|
-| Stopped | All MOSFETs off, motor idle | Until command received |
-| Kick | Initial high-torque burst | `kickMs` (default 120ms) |
-| Running | Normal commutation with ramp | Until stop or fault |
-| NeutralWait | All off, waiting for current to decay | `DIRECTION_NEUTRAL_MS` (80ms) |
-| Fault | Error state, all outputs off | Until manual reset |
-
-### 3.5 6-Step Commutation Table
-
-| Step | High Side | Low Side | Active Pins |
-|------|-----------|----------|-------------|
-| 0 | BH | AL | PB9(PWM) + PA7(HIGH) |
-| 1 | CH | AL | PA10(PWM) + PA7(HIGH) |
-| 2 | CH | BL | PA10(PWM) + PB0(HIGH) |
-| 3 | AH | BL | PA8(PWM) + PB0(HIGH) |
-| 4 | AH | CL | PA8(PWM) + PB1(HIGH) |
-| 5 | BH | CL | PB9(PWM) + PB1(HIGH) |
-
-### 3.6 Hall Sensor Processing
-
-**ISR (`hallISR`):** Reads all 3 Hall pins, stores raw value with microsecond timestamp. Minimal processing — only reads pins and sets a flag.
-
-**Main loop (`updateHallRuntime`):** 
-1. Reads ISR flag (or reads directly if no ISR event)
-2. Debounces: requires `HALL_STABLE_SAMPLES` (2) consecutive identical readings
-3. Validates: checks if raw value maps to a valid commutation state (0-5)
-4. Validates transition: ensures the state change is ±1 (no skipping)
-5. Calculates RPM period from ISR timestamps
-
-**Hall Map:** Maps raw 3-bit Hall values (1-6) to commutation states (0-5). Stored in EEPROM with magic number and checksum.
+| Parameter | Value |
+|-----------|-------|
+| Tick period | 60µs (16.6kHz) |
+| Max catch-up | 4 ticks (240µs) |
+| Expected execution | < 20µs per tick |
+| Worst case | ~50µs per tick (with catch-up) |
 
 ---
 
-## 4. Python Host Layer
+## 7. Stop vs Brake: Why Separate Behaviors?
 
-### 4.1 Current Implementation (Legacy WASD)
+### 7.1 Current Behavior: Coast Stop
 
-The current Python host (`wasd_controller.py`) provides a curses-based terminal UI with WASD keyboard controls:
-- W → Forward (hold-to-run)
-- S → Backward (hold-to-run)
-- D/↑ → PWM increase
-- A/↓ → PWM decrease
-- X → Stop
-- Q → Quit
+`stopMotorImmediate()` calls `allOff()` which:
+- Sets all high-side PWM to 0
+- Sets all low-side digital outputs to LOW
+- Motor continues spinning due to inertia (coast)
+- No current flows through MOSFETs
+- **Safe state** — all outputs de-energized
 
-**Communication:** Sends "w", "s", "x", "d", "a" commands via UART. Receives telemetry via UART.
+### 7.2 Target Behavior: Brake (Future)
 
-**Known Issues:**
-- Hold-to-run mechanism is broken (see ISSUES.md ISSUE-01 in context of Python side)
-- Uses WASD semantic commands that don't match target protocol
+`beginBrake()` will call `brakeAllLowSide()` which:
+- Sets all high-side PWM to 0
+- Sets all low-side digital outputs to HIGH
+- Motor EMF creates current through low-side MOSFETs
+- Motor slows down due to dynamic braking
+- **Active state** — MOSFETs are conducting
 
-### 4.2 Target Python Host (f/b/s Protocol)
+### 7.3 Why They Must Be Separate
 
-The Python host will be rewritten to:
-- Send `f<duty>` for forward (e.g., `f150`)
-- Send `b<duty>` for backward (e.g., `b150`)
-- Send `s` for stop
-- Send heartbeat every ~600ms while key is held
-- Immediately send `s` when key is released
-- Use configurable default duty (target: 150)
+| Aspect | Stop (Coast) | Brake (Active) |
+|--------|--------------|----------------|
+| MOSFET state | All off | Low-side on |
+| Current flow | None | Motor EMF through MOSFETs |
+| Energy dissipation | Motor inertia only | MOSFETs + motor winding |
+| Safety | Safe (de-energized) | Active (current flowing) |
+| Suitable for watchdog | ✅ Yes | ❌ No |
+| Suitable for fault | ✅ Yes | ❌ No |
+| User-controlled | Optional | Must be explicit |
 
----
+### 7.4 Semantic Difference
 
-## 5. UART Protocol
+- **Stop:** "I want the motor to stop spinning" → Let it coast, it will stop naturally
+- **Brake:** "I want the motor to stop NOW" → Actively oppose rotation, controlled deceleration
 
-### 5.1 Current Protocol (WASD — Legacy)
-
-| Command | Description | Direction |
-|---------|-------------|-----------|
-| `w` | Forward (persistent) | Python → Firmware |
-| `s` | Backward (persistent) | Python → Firmware |
-| `x` | Stop | Python → Firmware |
-| `d` | PWM +10 | Python → Firmware |
-| `a` | PWM -10 | Python → Firmware |
-
-### 5.2 Target Protocol (f/b/s)
-
-| Command | Description | Direction |
-|---------|-------------|-----------|
-| `f<duty>` | Forward at duty (0-255) | Host → Firmware |
-| `b<duty>` | Backward at duty (0-255) | Host → Firmware |
-| `s` | Stop | Host → Firmware |
-| `f` | Forward at default duty | Host → Firmware |
-| `b` | Backward at default duty | Host → Firmware |
-
-**Lease Semantics:** Each motion command refreshes a timestamp. If no new motion command arrives within `CMD_WATCHDOG_MS` (800ms), the firmware stops the motor automatically.
-
-### 5.3 Telemetry Format
-
-**Python Mode:**
-```
-RPM:<value>,D:<duty>,DIR:<F/R>,PH:<phase>,PWM:<set>,PDIR:<dir>,H:<hall>
-```
-
-**Normal Mode:**
-```
-RPM:<value>,D:<duty>,DIR:<F/R>,PH:<phase>,PWM:<target>,PDIR:<dir>
-```
-
-**Field Descriptions:**
-
-| Field | Python Mode | Normal Mode |
-|-------|-------------|-------------|
-| RPM | Calculated RPM | Calculated RPM |
-| D | `motorRt.currentDuty` | `motorRt.currentDuty` |
-| DIR | Direction (F/R) | Direction (F/R) |
-| PH | Phase enum (0-4) | Phase enum (0-4) |
-| PWM | `pythonPwmValue` (set value) | `motorRt.targetDuty` (firmware target) |
-| PDIR | Python direction (1/-1/0) | Firmware direction (1/-1) |
-| H | Hall raw value | — |
-
-### 5.4 OK Response Format
-
-```
-OK:FWD,PWM:<duty>    — Forward command accepted
-OK:REV,PWM:<duty>    — Backward command accepted
-OK:STOP              — Stop command accepted
-PWM:<duty>           — PWM changed
-[MODE] PYTHON        — Mode switch confirmation
-[MODE] NORMAL        — Mode switch confirmation
-```
-
-### 5.5 Line Termination
-
-- Commands: `\n` (LF) terminated
-- Responses: `\r\n` (CRLF) terminated
-- Idle timeout: 150ms — incomplete lines are auto-sent after timeout
+These are different user intentions and require different implementations.
 
 ---
 
-## 6. Watchdog / Failsafe
+## 8. Why Brake Should NOT Be Fault/Watchdog Default
 
-### 6.1 Software Watchdog
+### 8.1 The Problem with Brake-as-Default
+
+If watchdog timeout triggered brake instead of coast:
+- Motor would suddenly brake (unexpected force)
+- Current spike through MOSFETs (potential damage)
+- User/operator could be surprised (safety hazard)
+- In a multi-motor system: one motor braking while others coast = unpredictable behavior
+
+### 8.2 Coast as Default: Why It's Safe
+
+| Scenario | Coast Behavior | Brake Behavior |
+|----------|----------------|----------------|
+| Watchdog timeout | Motor coasts to stop (gradual) | Motor brakes (abrupt) |
+| Host crash | Motor coasts (safe) | Motor brakes (risky) |
+| Hall fault | Motor coasts (predictable) | Motor brakes (unpredictable) |
+| Power loss | Motor coasts (expected) | Motor brakes (unexpected) |
+
+### 8.3 Design Rule
+
+**Rule:** Fault and watchdog paths ALWAYS lead to coast/all-off. Brake is ONLY available through explicit user command (`k`).
+
+This ensures:
+- Default behavior is always safe
+- Brake requires conscious user decision
+- Watchdog/fault scenarios are predictable
+- Multi-motor systems behave consistently
+
+---
+
+## 9. Mevcut Arduino Firmware: What Already Fits
+
+### 9.1 Already-Aligned Structures
+
+| Structure | Status | Evidence |
+|-----------|--------|----------|
+| Scheduler/control tick | ✅ Aligned | `runMotorControlScheduler()` — 60µs, catch-up |
+| Hall cache/ISR | ✅ Aligned | `hallISR()` — lightweight, flag-based |
+| UART ring/queue | ✅ Aligned | `RxRing` + `CommandQueue` — non-blocking |
+| Software watchdog | ✅ Aligned | `checkCommandWatchdog()` — 800ms |
+| Python mode | ✅ Aligned | Separate command parser |
+| Deferred apply | ✅ Aligned | `pendingReq` → `applyPendingRequests()` |
+| EEPROM persistence | ✅ Aligned | Magic + checksum validation |
+| RPM calculation | ✅ Aligned | Hall period-based |
+
+### 9.2 Partially Aligned Structures
+
+| Structure | Status | Issue |
+|-----------|--------|-------|
+| Command queue processing | ✅ Fixed | `if` → `while` with budget (v0.3.0) |
+| Telemetry fields | ✅ Fixed | PWM_SET/PWM_ACT + backward compat (v0.3.0) |
+| Default PWM | ✅ Fixed | EEPROM-configurable, default 150 (v0.3.0) |
+| Python watchdog | ⚠️ Partial | Infrastructure exists but disabled |
+
+### 9.3 Missing Structures
+
+| Structure | Status | What's Needed |
+|-----------|--------|---------------|
+| f/b/s protocol | ❌ Missing | Replace WASD with f/b/s |
+| Lease semantics | ❌ Missing | Timestamp-based motion validation |
+| Brake state | ❌ Missing | `MotorPhase::Braking` + `brakeAllLowSide()` |
+| Hardware watchdog | ❌ Missing | IWDG initialization and feeding |
+| Host connection monitor | ❌ Missing | UART activity tracking |
+| Command timestamp | ❌ Missing | Stale command detection |
+| Multi-motor abstraction | ❌ Missing | Motor ID in protocol (hub handles this) |
+
+---
+
+## 10. What Needs Refactoring
+
+### 10.1 High Priority Refactors
+
+| Area | Current | Target | Effort |
+|------|---------|--------|--------|
+| Command queue | ✅ `while` with budget | Drains queue per iteration (v0.3.0) | Done |
+| Telemetry | ✅ PWM_SET/PWM_ACT | Unified naming (v0.3.0) | Done |
+| Python watchdog | ⚠️ Disabled | Enabled | Low |
+| Protocol | WASD (w/s/x/d/a) | f/b/s | Medium |
+| Default PWM | ✅ EEPROM-configurable | Default 150 (v0.3.0) | Done |
+
+### 10.2 Medium Priority Refactors
+
+| Area | Current | Target | Effort |
+|------|---------|--------|--------|
+| Brake state | Missing | `MotorPhase::Braking` | Medium |
+| Command timestamp | Missing | Add to `CommandItem` | Low |
+| Fault codes | Not in telemetry | Add `FC:<code>` | Low |
+| Host connection | Not monitored | Track UART activity | Low |
+
+### 10.3 Low Priority Refactors (Future)
+
+| Area | Current | Target | Effort |
+|------|---------|--------|--------|
+| Hardware watchdog | Missing | IWDG init + feed | Low |
+| Pin configuration | Hardcoded | Config-based | Medium |
+| Multi-motor protocol | Single motor | Hub-mediated | High |
+
+---
+
+## 11. Watchdog / Failsafe
+
+### 11.1 Software Watchdog
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
 | `CMD_WATCHDOG_MS` | 800 | Timeout for motion command lease |
 | `lastMotorCommandMs` | variable | Timestamp of last received motion command |
 
-**Behavior:** If `isMotorDriveActive()` and `(now - lastMotorCommandMs) > CMD_WATCHDOG_MS`, the motor is stopped immediately.
+**Behavior:** If `isMotorDriveActive()` and `(now - lastMotorCommandMs) > CMD_WATCHDOG_MS`, the motor is stopped immediately (coast).
 
 **Active in:** Normal mode, Settings mode
-**Inactive in:** Python mode (see ISSUES.md ISSUE-03)
+**Inactive in:** Python mode (to be fixed in Phase 2)
 
-### 6.2 Hardware Watchdog
+### 11.2 Watchdog/Fault Default Behavior Matrix
+
+| Trigger | Default Action | Reason |
+|---------|----------------|--------|
+| Lease timeout | Coast stop (allOff) | Safe, de-energized |
+| Hall timeout | Fault + Coast stop | Motor can't commutate |
+| Transition spam | Fault + Coast stop | Hall signal unreliable |
+| IWDG reset | MCU reset → allOff | Hardware recovery |
+| Host disconnect | Coast stop | No communication |
+
+**Rule:** All fault/watchdog paths lead to coast/all-off. Brake is never triggered automatically.
+
+### 11.3 Hardware Watchdog (Future)
 
 **Status:** NOT IMPLEMENTED
 
-No IWDG (Independent Watchdog) initialization or feeding exists in the code. If the firmware hangs, the motor will continue running at whatever duty was last applied.
-
-### 6.3 Hall Timeout
-
-| Parameter | Value | Description |
-|-----------|-------|-------------|
-| `START_NO_HALL_TIMEOUT_MS` | 400 | Fault if no valid hall within this time after start |
-| `INVALID_HALL_STOP_US` | 25000 | Fault if hall stays invalid for this duration |
-
-### 6.4 Transition Spam Protection
-
-If `hallRt.invalidTransitionCount > 20`, the motor is faulted with `MotorFaultCode::IllegalTransitionSpam`.
+IWDG will be added in Phase 4 with:
+- Timeout: 500ms
+- Feed point: After `motorControlTick()` in `loop()`
+- Behavior: MCU reset on timeout → all outputs off
 
 ---
 
-## 7. Command Queue / Buffer Architecture
+## 12. Command Queue / Buffer Architecture
 
-### 7.1 Data Flow
+### 12.1 Data Flow
 
 ```
-UART RX → RxRing (128 bytes, circular) → Line Parser → CommandQueue (8 items) → Command Processor
+UART RX → RxRing (128 bytes) → Line Parser → CommandQueue (8 items) → Command Processor → pendingReq → Control Tick
 ```
 
-### 7.2 RxRing
+### 12.2 RxRing
 
 - Size: 128 bytes
 - Type: Circular buffer
-- Push: `rxPush()` — called from `uartDrainToRing()`
-- Pop: `rxPop()` — called from `processRxRingToLines()`
-- Not interrupt-safe (ISR does not access ring buffer)
+- Not interrupt-safe (ISR doesn't access it)
 
-### 7.3 Line Parser (`processRxRingToLines`)
-
-- Reads characters from ring buffer
-- Accumulates into line buffer (64 chars max)
-- On `\r` or `\n`: enqueues completed line
-- On idle timeout (150ms): enqueues incomplete line
-- Budget: max 64 characters per call
-
-### 7.4 Command Queue
+### 12.3 Command Queue
 
 - Size: 8 commands
-- Item: `CommandItem { char text[64]; CommandSource src; }`
-- Enqueue: `enqueueCommand()` — fails if full (`queueOverflowFlag = true`)
-- Dequeue: `dequeueCommand()` — fails if empty
-- **Processing: ONE command per loop iteration** (see ISSUES.md ISSUE-01)
+- Processing: ONE per loop iteration (to be changed to `while` loop)
+- No timestamps (to be added)
 
-### 7.5 Pending Requests
+### 12.4 Pending Requests
 
-A separate `CommandRequest` struct holds deferred commands that are applied in `applyPendingRequests()` during the motor control tick:
+The `CommandRequest` struct holds deferred commands:
 - `hasRunRequest` + `runDirection`
 - `hasStopRequest`
 - `hasTargetDutyUpdate` + `requestedTargetDuty`
+- Future: `hasBrakeRequest`
 
-This separation ensures motor state changes happen atomically within the control tick, not during UART processing.
+Applied atomically in `applyPendingRequests()` during the control tick.
 
 ---
 
-## 8. Timing Architecture
+## 13. Timing Architecture
 
 | Component | Period | Method |
 |-----------|--------|--------|
 | Motor control tick | 60µs (~16.6kHz) | `runMotorControlScheduler()` with catch-up |
-| Telemetry | 100ms | `sendTelemetry()` / `sendPythonTelemetry()` |
+| Telemetry | 100ms | `sendTelemetry()` |
 | Watchdog check | Per loop iteration | `checkCommandWatchdog()` |
 | Hall debounce | 2 consecutive samples | `updateHallRuntime()` |
-| PWM frequency | 8kHz (target) | `analogWriteFrequency()` (if supported) |
+| PWM frequency | 8kHz (target) | `analogWriteFrequency()` |
 | Ramp update | 10ms (default) | `updateDutyState()` |
-
-### 8.1 Motor Control Catch-Up
-
-If the loop is delayed and multiple 60µs periods have passed, the scheduler runs up to `MAX_CONTROL_CATCHUP_TICKS` (4) ticks in a single loop iteration. If more than 4 ticks are missed, the scheduler resets and starts fresh.
+| Brake hold | 500ms (default) | `motorControlTick()` (Phase 4) |
 
 ---
 
-## 9. EEPROM Storage Layout
+## 14. Motor State Machine (Current + Planned)
+
+### 14.1 Current States
+
+```
+Stopped → (f/b command) → Kick → (kickMs timeout) → Running
+Running → (direction change) → NeutralWait → Kick → Running
+Any → (stop command / watchdog) → Stopped
+Any → (hall fault / transition spam) → Fault
+```
+
+### 14.2 Planned States (Phase 4)
+
+```
+Running → (brake command k) → Braking → (timeout/release) → Stopped
+Braking → (stop command s) → Stopped (immediate coast)
+Any → (watchdog/fault) → Stopped (coast, NOT brake)
+```
+
+| Phase | Description | Duration |
+|-------|-------------|----------|
+| Stopped | All outputs off, motor idle | Until command |
+| Kick | Initial high-torque burst | `kickMs` (default 120ms) |
+| Running | Normal commutation with ramp | Until stop/brake/fault |
+| NeutralWait | All off, waiting for current decay | `DIRECTION_NEUTRAL_MS` (80ms) |
+| Fault | Error state, outputs off | Until manual reset |
+| **Braking** | **Active braking (low-side short)** | **`brakeHoldMs` (default 500ms)** |
+
+---
+
+## 15. EEPROM Storage Layout
 
 | Address | Size | Content |
 |---------|------|---------|
@@ -377,13 +574,16 @@ If the loop is delayed and multiple 60µs periods have passed, the scheduler run
 | 64 | ~13 bytes | Config (magic, version, kick/ramp params, checksum) |
 | 128 | ~7 bytes | Operating Mode (magic, version, mode, checksum) |
 
-Each structure uses magic number validation and XOR checksum for integrity.
+**Planned additions (Phase 1+):**
+- `defaultPwm` in Config
+- `brakeEnabled` in Config
+- `brakeHoldMs` in Config
 
 ---
 
-## 10. Safety Layers
+## 16. Safety Layers
 
-### 10.1 Currently Implemented
+### 16.1 Currently Implemented
 
 | Layer | Type | Scope |
 |-------|------|-------|
@@ -394,20 +594,36 @@ Each structure uses magic number validation and XOR checksum for integrity.
 | Duty clamp | `clampValue(0, 255)` | All modes |
 | EEPROM validation | Magic + checksum | Startup |
 
-### 10.2 Missing Safety Layers
+### 16.2 Planned Safety Layers
 
-| Layer | Risk | Status |
-|-------|------|--------|
-| Hardware watchdog (IWDG) | Firmware hang → motor runs | Not implemented |
-| Software watchdog (Python mode) | Host crash → motor runs | Disabled |
-| Software dead-time | Shoot-through during transition | Not implemented |
-| Host connection monitor | Serial disconnect → motor runs | Not implemented |
+| Layer | Phase | Status | Hardware Support |
+|-------|-------|--------|------------------|
+| Python mode watchdog | Phase 2 | Will be enabled | Software only |
+| Hardware watchdog (IWDG) | Phase 4 | Will be added | STM32 peripheral |
+| Software dead-time | Phase 1 | Will be tested | L6388 internal DT exists |
+| Host connection monitor | Phase 3 | Will be added | Software only |
+| Brake timeout | Phase 4 | Will be added | Software + low-side MOSFETs |
+| Current-based protection | Phase 5 | Planned | INA181A1 + PA0 ADC (hardware ready) |
+| Voltage monitoring | Phase 6 | Planned | Divider + PA4 ADC (hardware ready) |
+
+### 16.3 Hardware Protection Summary
+
+| Protection | Hardware | Notes |
+|------------|----------|-------|
+| Fuse | J3 | Overcurrent at board input |
+| TVS diode | D1 | Transient voltage suppression |
+| Gate resistors | 22Ω (R14-R19) | Limits dV/dt, reduces ringing |
+| L6388 internal dead-time | Gate driver | Prevents cross-conduction |
+| Current sense | INA181A1 + 0.5mΩ shunt | 20V/V gain, PA0 ADC |
+| Voltage sense | 47kΩ/2.2kΩ divider | PA4 ADC |
+
+**Note:** L6388 gate drivers include internal dead-time protection, reducing but not eliminating the need for software dead-time. Hardware fuse and TVS provide input-level protection but do not protect against firmware-level overcurrent.
 
 ---
 
-## 11. 4-Motor Skid-Steer Architecture (Future)
+## 17. 4-Motor Skid-Steer Architecture (Future)
 
-### 11.1 System Topology
+### 17.1 System Topology
 
 ```
 ┌──────────────┐
@@ -425,99 +641,62 @@ Each structure uses magic number validation and XOR checksum for integrity.
 └───┘└───┘└───┘└───┘
 ```
 
-### 11.2 Motor Assignment (Skid-Steer)
+### 17.2 Scaling Points
 
-| Motor | Position | Side |
-|-------|----------|------|
-| M1 | Front Left | Left |
-| M2 | Front Right | Right |
-| M3 | Rear Left | Left |
-| M4 | Rear Right | Right |
+1. **No global state coupling:** Each motor driver is independent
+2. **UART-based communication:** Hub addresses each driver separately
+3. **Protocol compatibility:** f/b/s is motor-agnostic
+4. **Brake modularity:** Brake logic is per-motor, can be coordinated by hub
 
-### 11.3 Skid-Steer Control Logic
+### 17.3 Skid-Steer Control Logic
 
 | Action | Left Motors | Right Motors |
 |--------|-------------|--------------|
-| Forward | f<duty> | f<duty> |
-| Backward | b<duty> | b<duty> |
-| Turn Left | b<duty> | f<duty> |
-| Turn Right | f<duty> | b<duty> |
-| Spin Left | b<duty> | f<duty> |
-| Spin Right | f<duty> | b<duty> |
-| Stop | s | s |
-
-### 11.4 Scaling Points
-
-The current single-motor driver code is designed to scale to 4 motors through:
-
-1. **No global state coupling:** Each motor driver runs independently on its own STM32. There is no shared state between motor modules.
-
-2. **UART-based communication:** Each motor driver accepts commands via UART. The hub STM32 can address each driver on a separate UART port.
-
-3. **Protocol compatibility:** The f/b/s protocol is motor-agnostic. The hub simply routes commands to the appropriate motor.
-
-4. **Telemetry multiplexing:** The hub STM32 can query each motor's telemetry and forward aggregated data to Python.
-
-### 11.5 Hub STM32 Responsibilities (Separate Project)
-
-- Receive commands from Python host (multi-motor protocol)
-- Route commands to individual motor drivers via UART
-- Collect telemetry from each motor driver
-- Aggregate and forward telemetry to Python host
-- Implement skid-steer logic (optional: hub vs Python)
-- Handle motor-specific addressing (M1-M4)
-
-### 11.6 Python Host for 4 Motors (Future)
-
-The Python host will be updated to:
-- Send multi-motor commands (e.g., `M1:f150`, `M2:f150`, `M3:b150`, `M4:b150`)
-- Or send skid-steer commands (e.g., `TURN_LEFT:150`)
-- Display telemetry for all 4 motors
-- Support keyboard/gamepad input for skid-steer control
+| Forward | f\<duty\> | f\<duty\> |
+| Backward | b\<duty\> | b\<duty\> |
+| Turn Left | b\<duty\> | f\<duty\> |
+| Turn Right | f\<duty\> | b\<duty\> |
+| Stop (coast) | s | s |
+| Stop (brake) | k | k |
 
 ---
 
-## 12. Design Decisions and Trade-Offs
+## 18. Design Decisions and Trade-Offs
 
-### 12.1 60µs Control Tick
+### 18.1 Timer-Based Control Tick
 
-**Decision:** Motor control runs at 60µs (~16.6kHz) instead of a slower rate.
+**Decision:** 60µs tick instead of event-driven motor control.
 
-**Trade-off:** Higher CPU usage but smoother commutation and faster response to hall changes. At 8kHz PWM, this gives ~13 control ticks per PWM period, which is sufficient for smooth duty changes.
+**Trade-off:** Higher CPU usage but predictable timing. Essential for multi-motor coordination.
 
-### 12.2 Deferred Command Application
+### 18.2 Deferred Command Application
 
-**Decision:** Motor commands from UART are stored in `pendingReq` and applied during the motor control tick, not immediately when received.
+**Decision:** Commands stored in `pendingReq`, applied during control tick.
 
-**Trade-off:** Adds slight latency (up to 60µs) but ensures motor state changes happen atomically within the control tick, avoiding race conditions between UART processing and motor control.
+**Trade-off:** Slight latency (up to 60µs) but atomic state changes. Prevents race conditions.
 
-### 12.3 Separate Python and Normal Mode Parsers
+### 18.3 Coast as Default Stop
 
-**Decision:** Python mode has its own command parser (`processPythonCommand`) separate from the normal CLI parser (`processCommand`).
+**Decision:** Watchdog/fault always trigger coast stop, never brake.
 
-**Trade-off:** Code duplication but clean separation. Python mode commands (w/s/x/d/a) have different semantics than normal mode commands (f/b/s/status/etc). The fallback from Python parser to normal parser (`processCommand(cmd, src)`) allows shared commands like "status", "mode", "identify" to work in both modes.
+**Trade-off:** Less aggressive stopping but safer. Brake requires explicit user command.
 
-### 12.4 EEPROM-Based Configuration
+### 18.4 Low-Side Dynamic Brake
 
-**Decision:** Hall map, config, and operating mode are stored in EEPROM with magic numbers and checksums.
+**Decision:** First brake implementation uses low-side short, not reverse torque.
 
-**Trade-off:** Limited EEPROM wear cycles (~100k for STM32 flash emulation) but persistent configuration across power cycles. Magic number validation prevents loading corrupted data.
-
-### 12.5 Software-Only Dead-Time
-
-**Decision:** Dead-time is not implemented in software. MOSFET switching relies on hardware characteristics.
-
-**Trade-off:** Simpler code but potential shoot-through risk. Real-world impact depends on MOSFET driver speed and gate resistor values. See ISSUES.md ISSUE-02.
+**Trade-off:** Less braking force but safer. Reverse torque braking is future consideration.
 
 ---
 
-## 13. Known Architectural Risks
+## 19. Known Architectural Risks
 
 | Risk | Category | Impact | Mitigation |
 |------|----------|--------|------------|
-| No hardware watchdog | Safety | Firmware hang → motor runs | Add IWDG |
-| No Python watchdog | Safety | Host crash → motor runs | Enable watchdog in Python mode |
-| Single command/iteration | Performance | Queue buildup under load | Change `if` to `while` |
-| Hardcoded pin mapping | Flexibility | Requires code change for different boards | Use board-specific config |
-| No motor ID in protocol | Scalability | Hub can't address specific motors | Add motor ID prefix |
-| PWM field semantics differ | Data integrity | Telemetry misinterpretation | Unify field naming |
+| No hardware watchdog | Safety | Firmware hang → motor runs | Add IWDG (Phase 4) |
+| No Python watchdog | Safety | Host crash → motor runs | Enable watchdog (Phase 2) |
+| Single command/iteration | Performance | Queue buildup | Change `if` to `while` (Phase 1) |
+| No brake state | Feature | No active braking | Add Braking phase (Phase 4) |
+| Hardcoded pins | Flexibility | Board changes need code changes | Config-based pins (future) |
+| No motor ID in protocol | Scalability | Hub can't address motors | Hub handles ID (Phase 7) |
+| Brake akım riski | Safety | MOSFET damage | Test + timeout (Phase 5) |

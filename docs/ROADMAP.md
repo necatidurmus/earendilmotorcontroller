@@ -3,307 +3,687 @@
 > **Project:** STM32 BLDC Motor Driver (Black Pill F411CE)
 > **Current State:** Working prototype with WASD Python host (legacy)
 > **Target State:** 4-motor skid-steer vehicle with hub STM32
+> **Design Principle:** Timer/event-based async architecture, stop≠brake separation, multi-motor readiness
 
 ---
 
-## Phase 0: Stabilize Current Code
+## Tasarım Kararları Özeti
 
-**Objective:** Fix critical bugs in existing codebase before any protocol changes.
+Bu roadmap'e yeni eklenen iki temel tasarım kararı:
 
-**Tasks:**
-- [ ] Fix command queue bottleneck: change `if` to `while` in `processQueuedCommands()` and `processPythonQueuedCommands()`
-- [ ] Test software dead-time in `applyDriveState()` — measure if shoot-through occurs
-- [ ] Fix `saveall` to include `saveModeToStorage()`
-- [ ] Increase `IDENTIFY_TOGGLE_MS` to 50-100ms (from 1ms)
-- [ ] Add default PWM to EEPROM config (make `pythonPwmValue` configurable)
-- [ ] Unify telemetry "PWM" field semantics or use distinct field names
+### 1. Timer/Event Tabanlı Asenkron Mimarinin Korunması
 
-**Dependencies:** None — current codebase only
+Mevcut kodda zaten var olan yapı korunacak ve güçlendirilecek:
+- PWM üretimi timer tabanlı (`runMotorControlScheduler()` 60µs tick)
+- Hall değişimi event-driven / ISR tabanlı (`hallISR`)
+- Kontrol/failsafe/protection ayrı bir control tick/scheduler ile yürür
+- UART yalnızca komut girişi ve hedef durum güncelleme rolünde kalır
+- Komutlar doğrudan MOSFET sürmez, `pendingReq` üzerinden intent düzeyinde kalır
 
-**Risks:**
-- Dead-time test may reveal hardware issues (MOSFET damage risk)
-- Identify step timing may need hardware-specific tuning
+**Neden:** Motor kontrol hot path'i ile UART parsing birbirinden ayrılmış kalmalı. Bu ayrım korunmazsa 4 motorlu yapıda timing garantisi verilemez.
 
-**Success Criteria:**
-- Command queue processes all queued commands per loop iteration
-- Motor commutation works reliably after identify
-- Configuration is persistent across reboots
+### 2. Stop ≠ Brake Ayrımı
 
-**Test Items:**
-- [ ] Rapid command input → all commands processed without delay
-- [ ] Identify → produces valid hall map consistently
-- [ ] `saveall` → mode persists after reboot
-- [ ] Config change → PWM default persists after reboot
-- [ ] Telemetry fields are consistent across modes
+Mevcut durumda `stopMotorImmediate()` → `allOff()` = **coast stop** (tüm MOSFET'ler kapatılır, motor serbest kalır).
+
+Hedef: Stop ve brake ayrı state/komut olarak tanımlanacak:
+- **Stop (s):** Coast stop — tüm çıkışlar kapatılır, motor serbest kalır
+- **Brake (k):** Aktif fren — kontrollü dinamik fren (low-side short)
+
+**Neden:** Brake, stop'un yerine geçmemeli. Watchdog/fault durumlarında default behavior **brake değil, coast/all-off** olmalı. Brake kullanıcı kontrollü, bilinçli bir eylem olmalı.
 
 ---
 
-## Phase 1: f/b/s Protocol Implementation
+## Faz Bazlı Ayrım
 
-**Objective:** Replace WASD protocol with f/b/s motion protocol in firmware.
-
-**Tasks:**
-- [ ] Implement f/b/s command parsing in `processCommand()`:
-  - `f` → forward at default PWM (configurable, default 150)
-  - `f<duty>` → forward at specified duty (0-255)
-  - `b` → backward at default PWM
-  - `b<duty>` → backward at specified duty
-  - `s` → stop
-- [ ] Update `processPythonCommand()` to handle f/b/s (remove w/s/x/d/a)
-- [ ] Implement lease-based motion:
-  - Each f/b/s command refreshes `lastMotorCommandMs`
-  - Enable `checkCommandWatchdog()` in Python mode
-  - Motor stops if no motion command for 800ms
-- [ ] Update telemetry to use consistent "PWM" field
-- [ ] Remove WASD-specific code from firmware (d/a for PWM, w/s for direction)
-
-**Dependencies:** Phase 0 completed
-
-**Risks:**
-- Protocol change may break existing Python host
-- Watchdog activation in Python mode may cause unexpected stops if heartbeat timing is off
-
-**Success Criteria:**
-- `f150` → motor runs forward at PWM 150
-- `b100` → motor runs backward at PWM 100
-- `s` → motor stops
-- No command for 800ms → motor auto-stops
-- Telemetry fields are consistent
-
-**Test Items:**
-- [ ] Send `f150` → motor runs forward at ~59% duty
-- [ ] Send `b100` → motor runs backward at ~39% duty
-- [ ] Send `s` → motor stops
-- [ ] Send `f150` then wait 1 second → motor auto-stops at 800ms
-- [ ] Send `f150` every 600ms → motor continues running (lease renewal)
-- [ ] Send `f` → motor runs at default PWM (configurable)
-- [ ] Rapid f/b/s commands → all processed correctly
+Bu roadmap'te her madde şu etiketlerle işaretlenir:
+- `[bugfix]` — Mevcut kodda düzeltilmesi gereken bug
+- `[architecture]` — Mimari düzeltme veya iyileştirme
+- `[safety]` — Güvenlik / failsafe işi
+- `[protocol]` — Protokol değişikliği
+- `[brake]` — Brake ile ilgili
+- `[multi-motor]` — 4 motorlu gelecek hazırlığı
+- `[documentation]` — Dokümantasyon
+- `[validation]` — Test/doğrulama
 
 ---
 
-## Phase 2: FTDI Connection Test
+## Phase 0: Mevcut Durumun Doğru Belgelenmesi
 
-**Objective:** Verify single motor driver works correctly over FTDI serial connection.
+**Amaç:** Mevcut kodda zaten olan yapıları ve eksik olan yapıları net biçimde ayırmak.
 
-**Tasks:**
-- [ ] Connect motor driver to host via FTDI USB-serial adapter
-- [ ] Test basic f/b/s commands via serial terminal (minicom, screen, or PuTTY)
-- [ ] Verify telemetry reception
-- [ ] Test watchdog behavior (send f, then stop sending → motor should stop at 800ms)
-- [ ] Test identify command over FTDI
-- [ ] Measure round-trip latency (command → telemetry response)
-- [ ] Test at different baud rates if needed
+**Neden gerekli:** Yeni roadmap'in temeli doğru bir mevcut durum analizi. Yanlış belgeleme yanlış yönlendirir.
 
-**Dependencies:** Phase 1 completed
+### Zaten Mevcut Olan Yapılar
 
-**Risks:**
-- FTDI adapter may have different timing than direct USB
-- Serial line noise may cause command parsing errors
+| Yapı | Durum | Kod Referansı |
+|------|-------|---------------|
+| Scheduler / control tick | ✅ Mevcut | `runMotorControlScheduler()` — 60µs tick, catch-up ile |
+| Hall cache / ISR temelli yapı | ✅ Mevcut | `hallISR()` — hafif, sadece pin okuma + flag |
+| UART ring/queue yaklaşımı | ✅ Mevcut | `RxRing` (128B) + `CommandQueue` (8 item) |
+| Software watchdog altyapısı | ✅ Mevcut | `checkCommandWatchdog()` — 800ms, Normal/Settings |
+| Python mode / host kontrollü mod | ✅ Mevcut | `processPythonCommand()` — WASD handler |
+| Deferred command apply | ✅ Mevcut | `pendingReq` → `applyPendingRequests()` |
+| EEPROM kalıcılık | ✅ Mevcut | Hall map, config, mode — magic + checksum |
+| RPM hesaplama | ✅ Mevcut | `calculateRPM()` — hall periodundan |
 
-**Success Criteria:**
-- All f/b/s commands work over FTDI
-- Telemetry is received correctly
-- Watchdog triggers as expected
-- No ghost commands or stale data
+### Eksik veya Hedefe Uyumsuz Yapılar
 
-**Test Items:**
-- [ ] Basic f/b/s via serial terminal
-- [ ] Watchdog test: send f, disconnect → motor stops
-- [ ] Identify test: hall map produced correctly
-- [ ] Long-running test: motor runs for 5 minutes without issues
-- [ ] Noise test: add noise to serial line → commands still work
+| Yapı | Durum | Açıklama |
+|------|-------|----------|
+| UART protokolü hâlâ klavye semantiği | ❌ Eksik | w/s/x/d/a gönderiliyor, hedef f/b/s |
+| Python mode'da lease/watchdog | ❌ Eksik | Watchdog kapalı, lease anlamsız |
+| Default PWM hedef değer uyumsuzluğu | ❌ Eksik | 60, hedef 150 (yapılandırılabilir olmalı) |
+| Stale command/backlog riski | ❌ Eksik | Kuyruk 1 komut/işlem, timestamp yok |
+| Latest-command-wins / mailbox | ❌ Eksik | Kuyruk sıralı, son komut garantisi yok |
+| Çok motorlu soyutlama | ❌ Eksik | Tek global state, hardcoded pinler |
+| Brake state | ❌ Eksik | Sadece coast stop var |
+| Donanımsal watchdog (IWDG) | ❌ Eksik | Yok |
 
----
+**Yapılacak İşler:**
+- [ ] Mevcut yapıları doğrula ve belgele [documentation]
+- [ ] Eksik yapıları sınıflandır ve önceliklendir [documentation]
+- [ ] ISSUES.md'yi güncelle [documentation]
 
-## Phase 3: Python Host Update
+**Başarı Kriterleri:**
+- Mevcut vs eksik yapılar net biçimde ayrılmış
+- Her eksik yapı bir faza atanmış
 
-**Objective:** Rewrite Python host to use f/b/s protocol with lease-based heartbeat.
-
-**Tasks:**
-- [ ] Rewrite `wasd_controller.py` or create new `motor_controller.py`:
-  - Send `f<default_pwm>` on W key press
-  - Send `b<default_pwm>` on S key press
-  - Send `s` on key release
-  - Send `d` / `a` for PWM adjust (send updated f/b with new duty)
-  - Heartbeat: send current command every 600ms while key held
-- [ ] Default PWM: configurable, stored in config, default 150
-- [ ] Update telemetry parser for consistent field names
-- [ ] Remove WASD-specific command mapping
-- [ ] Add multi-motor support structure (prepare for Phase 6)
-
-**Dependencies:** Phase 2 completed
-
-**Risks:**
-- Keyboard input timing may not match 600ms heartbeat target
-- Curses nodelay mode may still have issues with key detection
-
-**Success Criteria:**
-- W key → motor runs forward, continues while held
-- S key → motor runs backward, continues while held
-- Key release → motor stops within 800ms (via watchdog)
-- Heartbeat sends command every ~600ms
-- PWM adjust works during motor run
-
-**Test Items:**
-- [ ] Hold W → motor runs forward continuously
-- [ ] Release W → motor stops within 800ms
-- [ ] Hold S → motor runs backward continuously
-- [ ] Adjust PWM while running → duty changes smoothly
-- [ ] Kill Python process → motor stops (watchdog)
-- [ ] Disconnect serial cable → motor stops (watchdog)
+**Bu faz tamamlanmadan sonraki faza geçilebilir mi:** Evet, bu faz dokümantasyon odaklı
 
 ---
 
-## Phase 4: Safety Layers
+## Phase 1: Tek Motor Asenkron Timer/Event Mimarisinin Stabilize Edilmesi
 
-**Objective:** Add hardware watchdog and strengthen failsafe mechanisms.
+**Amaç:** Mevcut timer/event tabanlı asenkron mimariyi stabilize etmek ve hedef davranışla uyumlu hale getirmek.
 
-**Tasks:**
-- [ ] Add IWDG (Independent Watchdog) initialization in `setup()`:
-  - Timeout: 500ms
-  - Feed in `loop()` after motor control tick
-- [ ] Add host connection monitor:
-  - Track last UART activity time
-  - If no UART activity for 2 seconds → stop motor
-- [ ] Add motor driver self-test on startup:
-  - Verify hall sensors respond
-  - Verify MOSFET outputs toggle
-- [ ] Add emergency stop command (`e` or `estop`) that bypasses all modes
-- [ ] Add fault code to telemetry (include `FC:<code>` field)
+**Neden gerekli:** Mevcut kodda scheduler/hall/UART ayrımı zaten var ama bazı parçalar hedef mimariyle uyumsuz (kuyruk darboğazı, watchdog eksikliği, identify timing).
 
-**Dependencies:** Phase 3 completed
+### Yapılacak Teknik İşler
 
-**Risks:**
-- IWDG timeout too short may cause resets during normal operation
-- Self-test may produce unwanted motor movement
+**Bug Düzeltmeleri:**
+- [x] [bugfix] Kuyruk darboğazı: `processQueuedCommands()` ve `processPythonQueuedCommands()` içindeki `if` → `while` (max CMD_QUEUE_LEN budget)
+- [x] [bugfix] `saveall` komutuna `saveModeToStorage()` ekle
+- [x] [bugfix] `IDENTIFY_TOGGLE_MS` değerini 50ms'ye çıkar + `IDENTIFY_STEP_INTERVAL_MS` eklendi
+- [x] [bugfix] Default PWM'yi EEPROM'dan ayarlanabilir yap (`defaultPwm` config alanı, hedef 150)
 
-**Success Criteria:**
-- Firmware hang → MCU resets within 500ms → motor stops
-- Serial disconnect → motor stops within 2 seconds
-- Fault codes visible in telemetry
-- Emergency stop works from any mode
+**Mimari İyileştirmeler:**
+- [x] [architecture] Telemetri "PWM" field semantic karışıklığını çöz (PWM_SET / PWM_ACT + backward compat PWM)
+- [x] [architecture] `CommandItem` yapısına timestamp ekle (stale command detection)
+- [x] [architecture] Command queue'da latest-command-wins mantığı uygula
 
-**Test Items:**
-- [ ] Force firmware hang (infinite loop) → MCU resets, motor stops
-- [ ] Disconnect serial cable → motor stops within 2s
-- [ ] Send `e` → motor stops immediately regardless of mode
-- [ ] Trigger fault → fault code appears in telemetry
-- [ ] Self-test on startup → reports OK or specific failure
+**Validasyon:**
+- [ ] [validation] Dead-time test et — `applyDriveState()` shoot-through ölçümü
+- [ ] [validation] Rapid command input test — tüm komutlar işleniyor mu
+- [ ] [validation] Identify test — tutarlı hall map üretiyor mu
 
----
+**Etkilenen Modüller:**
+- `processQueuedCommands()` — main.cpp
+- `processPythonQueuedCommands()` — main.cpp
+- `sendTelemetry()` / `sendPythonTelemetry()` — main.cpp
+- `updateServiceIdentify()` — main.cpp
+- `applyDriveState()` — main.cpp (test)
+- `CommandItem` struct — main.cpp
+- `SavedConfig` struct — main.cpp
 
-## Phase 5: Hub STM32 Integration Preparation
+**Riskler:**
+- Dead-time testi donanım hasarı riski taşıyabilir (MOSFET)
+- Identify step timing değişikliği motor fiziksel olarak test edilmeli
 
-**Objective:** Prepare motor driver module for integration with hub STM32.
+**Başarı Kriterleri:**
+- Kuyrukta biriken komutlar tek loop iterasyonunda işleniyor
+- Identify tutarlı hall map üretiyor
+- Config EEPROM'dan yükleniyor
+- Telemetri field'ları mod bağımsız anlamlı
 
-**Tasks:**
-- [ ] Define motor addressing protocol (e.g., `M1:f150` or separate UART ports)
-- [ ] Test multiple motor drivers on separate UART ports (using USB-serial adapters)
-- [ ] Ensure motor driver module is self-contained (no dependencies on specific hub)
-- [ ] Document hub-to-motor protocol (command format, timing, error handling)
-- [ ] Create test harness that simulates hub behavior
-- [ ] Verify telemetry format is hub-friendly (easy to parse and forward)
-
-**Dependencies:** Phase 4 completed
-
-**Risks:**
-- Multiple UART ports may cause timing conflicts
-- Protocol may need adjustment for hub multiplexing
-
-**Success Criteria:**
-- 4 motor drivers can be controlled independently via separate UART ports
-- Each driver responds with correct telemetry
-- No cross-talk between motor drivers
-- Hub protocol documentation is complete
-
-**Test Items:**
-- [ ] Connect 2+ motor drivers via separate USB-serial adapters
-- [ ] Control each independently with f/b/s commands
-- [ ] Verify telemetry from each is correctly separated
-- [ ] Run all 4 motors simultaneously
-- [ ] Measure aggregate telemetry bandwidth
+**Bu faz tamamlanmadan sonraki faza geçilebilir mi:** Hayır — bug'lar düzeltilmeden protokol değişikliği riskli
 
 ---
 
-## Phase 6: 4-Motor Skid-Steer
+## Phase 2: UART Motion Protokolünün Sadeleştirilmesi
 
-**Objective:** Implement full 4-motor skid-steer control via hub STM32.
+**Amaç:** WASD protokolünü kaldırıp f/b/s motion protokolüne geçmek.
 
-**Tasks:**
-- [ ] Hub STM32 project (separate repository):
-  - Receive commands from Python host
-  - Route to 4 motor driver UARTs
-  - Aggregate telemetry from 4 motors
-  - Implement skid-steer logic (optional)
-- [ ] Python host for 4 motors:
-  - Keyboard: W/S for forward/backward, A/D for turning
-  - Or: WASD for skid-steer (left side / right side)
-  - Display telemetry for all 4 motors
-  - PWM adjust affects all motors
-- [ ] Tank steering modes:
-  - Arcade: single stick forward/turn
-  - Tank: left side / right side independent
-- [ ] Safety: all-motor stop on any driver fault
+**Neden gerekli:** Mevcut WASD semantiği hedef mimariyle uyumsuz. f/b/s protokolü motor-agnostik, lease-tabanlı, 4 motorlu yapıya uygun.
 
-**Dependencies:** Phase 5 completed, hub STM32 project started
-
-**Risks:**
-- Hub STM32 development may take significant time
-- 4-motor coordination may reveal timing issues
-- Power supply requirements for 4 motors
-
-**Success Criteria:**
-- 4 motors controlled simultaneously via hub
-- Skid-steer turning works correctly
-- All motors stop on any fault
-- Telemetry from all 4 motors displayed in Python UI
-
-**Test Items:**
-- [ ] Forward: all 4 motors run forward
-- [ ] Backward: all 4 motors run backward
-- [ ] Turn left: right motors forward, left motors backward
-- [ ] Turn right: left motors forward, right motors backward
-- [ ] Stop: all motors stop
-- [ ] Fault on one motor: all motors stop
-- [ ] PWM adjust: all motors respond
-- [ ] Long-running test: 10-minute drive without issues
-
----
-
-## Phase Dependency Graph
+### Mevcut Protokol (Kaldırılacak)
 
 ```
-Phase 0 (Stabilize)
+w = ileri (kalıcı)
+s = geri (kalıcı)
+x = dur
+d = PWM+10
+a = PWM-10
+```
+
+### Hedef Protokol (Uygulanacak)
+
+```
+f       = ileri varsayılan PWM
+f<duty> = ileri duty (0-255)
+b       = geri varsayılan PWM
+b<duty> = geri duty
+s       = dur (coast stop)
+k       = brake (Phase 4'te eklenecek)
+```
+
+**Yapılacak Teknik İşler:**
+- [ ] [protocol] `processCommand()`'da f/b/s komut parsing uygula
+- [ ] [protocol] `processPythonCommand()`'dan w/s/x/d/a kaldır, f/b/s ekle
+- [ ] [protocol] Lease-tabanlı motion: her f/b/s komutu `lastMotorCommandMs` yeniler
+- [ ] [protocol] Python modunda watchdog'u aktifleştir (`checkCommandWatchdog()`)
+- [ ] [protocol] Telemetri field'larını tutarlı hale getir
+- [ ] [protocol] WASD-specific kodu temizle
+
+**Etkilenen Modüller:**
+- `processCommand()` — main.cpp
+- `processPythonCommand()` — main.cpp
+- `loop()` — main.cpp (Python branch'ta watchdog ekle)
+- `sendTelemetry()` / `sendPythonTelemetry()` — main.cpp
+
+**Riskler:**
+- Protokol değişikliği mevcut Python host'u bozar (Phase 3'te güncellenecek)
+- Watchdog aktifleştirmesi heartbeat timing'iyle uyumsuz olabilir
+
+**Başarı Kriterleri:**
+- `f150` → motor ileri PWM 150'de çalışır
+- `b100` → motor geri PWM 100'de çalışır
+- `s` → motor durur (coast)
+- 800ms komut gelmezse motor otomatik durur
+- Telemetri tutarlı
+
+**Bu faz tamamlanmadan sonraki faza geçilebilir mi:** Hayır — protokol değişikliği Python host'u da etkiler
+
+---
+
+## Phase 3: Lease/Watchdog/Failsafe Davranışının Netleştirilmesi
+
+**Amaç:** Lease semantiğini, watchdog davranışını ve failsafe yollarını net kurallara bağlamak.
+
+**Neden gerekli:** Protokol değişikliği sonrası lease/watchdog davranışları tanımlanmalı. Watchdog/fault durumunda brake değil coast default olmalı.
+
+### Lease Kuralları
+
+| Kural | Açıklama |
+|-------|----------|
+| Lease yenileme | Her geçerli f/b/s komutu `lastMotorCommandMs` yeniler |
+| Lease timeout | 800ms komut gelmezse motor otomatik durur |
+| Lease scope | Sadece hareket komutları lease yeniler (s, status, mode yenilemez) |
+| Heartbeat aralığı | Python host ~600ms'de bir komut göndermeli |
+
+### Watchdog/Fault Default Davranışları
+
+| Durum | Default Aksiyon | Açıklama |
+|-------|-----------------|----------|
+| Lease timeout | Coast stop (allOff) | Motor serbest kalır |
+| Hall timeout | Fault + Coast stop | Motor serbest kalır, fault kodu set |
+| Transition spam | Fault + Coast stop | Motor serbest kalır, fault kodu set |
+| IWDG reset | MCU reset → allOff | Donanımsal sıfırlama |
+| Host disconnect | Coast stop | UART aktivitesi yoksa dur |
+
+**Neden brake değil coast:** Brake aktif bir eylem (akım tüketir, MOSFET sürer). Watchdog/fault durumlarında güvenli durum = tüm çıkışlar kapalı. Brake sadece kullanıcı kontrollü, bilinçli bir eylem olmalı.
+
+**Yapılacak Teknik İşler:**
+- [ ] [safety] Lease kurallarını belgele ve uygula
+- [ ] [safety] Python modunda watchdog'u aktifleştir
+- [ ] [safety] Fault durumlarında default behavior'ı doğrula (coast olmalı)
+- [ ] [safety] Host connection monitor ekle (2sn aktivite yoksa stop)
+- [ ] [documentation] Watchdog/fault behavior matrix'i belgele
+
+**Etkilenen Modüller:**
+- `checkCommandWatchdog()` — main.cpp
+- `loop()` — main.cpp
+- `triggerFault()` — main.cpp
+- ISSUES.md
+
+**Riskler:**
+- Watchdog aktifleştirmesi beklenmedik durmalara neden olabilir (heartbeat test edilmeli)
+- Host connection monitor yanlış pozitif verebilir
+
+**Başarı Kriterleri:**
+- Lease kuralları belgelenmiş ve uygulanmış
+- Python modunda watchdog aktif
+- Fault/watchdog durumunda motor coast durumda durur
+- Host disconnect motoru durdurur
+
+**Bu faz tamamlanmadan sonraki faza geçilebilir mi:** Hayır — safety kuralları brake eklemeden önce net olmalı
+
+---
+
+## Phase 4: Stop vs Brake State Machine Ayrımı [brake]
+
+**Amaç:** Stop (coast) ve brake (aktif fren) davranışlarını ayrı state ve komut olarak tanımlamak.
+
+**Neden gerekli:** Mevcut yapıda sadece coast stop var. Brake, kontrollü durma gerektiren senaryolar için gerekli ama stop'un yerine geçmemeli.
+
+### Stop vs Brake Karşılaştırması
+
+| Özellik | Stop (s) | Brake (k) |
+|---------|----------|----------|
+| MOSFET durumu | Tüm çıkışlar kapalı | Low-side MOSFET'ler kısa devre |
+| Motor davranışı | Serbest kalır (coast) | Kontrollü yavaşlar (dynamic brake) |
+| Akım | Yok | Kısa devre akımı (motor EMF'sinden) |
+| Güvenli durum | Evet | Hayır (akım riski) |
+| Watchdog default | Bu | Bu değil |
+| Fault default | Bu | Bu değil |
+| Kullanıcı komutu | `s` | `k` |
+
+### Yeni State Machine
+
+```
+                    ┌───────────┐
+                    │  Stopped  │←──── coast (s), watchdog, fault
+                    └─────┬─────┘
+                          │ f/b command
+                    ┌─────▼─────┐
+                    │   Kick    │ (optional)
+                    └─────┬─────┘
+                          │ kickMs timeout
+                    ┌─────▼─────┐
+                    │  Running  │
+                    └──┬────┬──┘
+                       │    │
+              stop (s) │    │ brake (k)
+                       │    │
+              ┌────────▼┐  ┌▼────────┐
+              │ Stopped  │  │ Braking │
+              │ (coast)  │  │ (active)│
+              └──────────┘  └────┬────┘
+                                 │ brake release / timeout
+                                 ▼
+                           ┌───────────┐
+                           │  Stopped  │
+                           └───────────┘
+```
+
+### Brake State Detayları
+
+**Brake Nasıl Çalışır:**
+- Tüm high-side MOSFET'ler kapatılır (PWM = 0)
+- Tüm low-side MOSFET'ler açılır (digitalWrite HIGH)
+- Motor EMF'si low-side MOSFET'ler üzerinden kısa devre yapar
+- Motor kontrollü yavaşlar
+
+**Brake Süresi:**
+- `brakeHoldMs` — maksimum brake süresi (default: 500ms)
+- Bu süre sonunda otomatik olarak Stopped'a geçer
+- Kullanıcı brake sırasında `s` gönderirse anında coast'a geçer
+
+**Brake Release Koşulları:**
+- `s` komutu gelirse → Stopped (coast)
+- `brakeHoldMs` timeout → Stopped (coast)
+- Watchdog timeout → Stopped (coast)
+- Fault → Stopped (coast)
+
+**Yapılacak Teknik İşler:**
+- [ ] [brake] `MotorPhase::Braking` enum ekle
+- [ ] [brake] `brakeEnabled` config ekle (EEPROM)
+- [ ] [brake] `brakeHoldMs` config ekle (EEPROM)
+- [ ] [brake] `brakeAllLowSide()` fonksiyonu yaz
+- [ ] [brake] `beginBrake()` fonksiyonu yaz
+- [ ] [brake] `k` komutunu `processCommand()`'a ekle
+- [ ] [brake] `k` komutunu `processPythonCommand()`'a ekle
+- [ ] [brake] State machine'e Braking fazını ekle
+- [ ] [brake] Brake timeout mekanizması ekle
+- [ ] [brake] Brake sırasında `s` komutunu handle et (coast'a geç)
+- [ ] [brake] Telemetri'ye brake durumunu ekle
+- [ ] [brake] CLI'ya brake komutlarını ekle (brake on/off, brakehold)
+
+**Etkilenen Modüller:**
+- `MotorPhase` enum — main.cpp
+- `motorControlTick()` — main.cpp
+- `processCommand()` — main.cpp
+- `processPythonCommand()` — main.cpp
+- `applyDriveState()` — main.cpp (brake durumu)
+- `stopMotorImmediate()` — main.cpp (coast olarak kalmalı)
+- `SavedConfig` struct — main.cpp
+
+**Riskler:**
+- Brake sırasında akım spike'i MOSFET/驱动 hasarına neden olabilir
+- Brake süresi çok uzunsa motor ısınabilir
+- Low-side short yöntemi motor tipine göre farklı davranabilir
+
+**Başarı Kriterleri:**
+- `s` komutu → coast stop (mevcut davranış korunur)
+- `k` komutu → brake (aktif fren)
+- Brake timeout sonunda motor Stopped'a geçer
+- Watchdog/fault durumunda motor coast durur (brake değil)
+- Telemetri brake durumunu gösterir
+
+**Bu faz tamamlanmadan sonraki faza geçilebilir mi:** Hayır — brake mimarisinin temeli atılmalı
+
+---
+
+## Phase 5: Brake Güvenlik ve Test Fazı [brake] [safety]
+
+**Amaç:** Brake davranışını güvenli hale getirmek ve donanım üzerinde doğrulamak.
+
+**Neden gerekli:** Brake aktif bir eylem. Akım riskleri var. İlk sürümde reverse torque braking yapılmamalı.
+
+### İlk Güvenli Sürüm Fren Yaklaşımı
+
+**Seçilen Yöntem:** Low-side dynamic brake
+
+| Özellik | Değer |
+|---------|-------|
+| Yöntem | Tüm low-side MOSFET'leri aç, high-side kapat |
+| Akım Kaynağı | Motor EMF (back-EMF) |
+| Kontrol | Açık döngü (open-loop) |
+| Risk Seviyesi | Düşük-orta |
+| Reverse Torque | ❌ İlk sürümde yok |
+
+**Neden Low-Side Dynamic Brake:**
+- Reverse torque braking'e göre daha güvenli
+- Akım motor EMF'sinden gelir, güç kaynağından değil
+- Açık döngü kontrolü basit
+- Donanım değişikliği gerektirmez
+
+**Neden Reverse Torque Braking İlk Sürümde Yok:**
+- Daha agresif, daha riskli
+- Güç kaynağından akım çekilir
+- Kontrol döngüsü daha karmaşık
+- Gelecekte değerlendirilecek (ISSUES.md'ye not)
+
+### Akım ve Risk Yönetimi
+
+**Brake Sırasında Akım Riski:**
+- Motor EMF'si düşük side MOSFET'ler üzerinden kısa devre yapar
+- Akım motor hızına ve bobin direncine bağlı
+- Yüksek hızda ani brake → yüksek akım spike'i
+- `brakeHoldMs` sınırı → akım süresini sınırlar
+
+**Koruma Mekanizmaları:**
+- `brakeHoldMs` timeout (default 500ms)
+- Brake sırasında `s` komutu → anında coast
+- Watchdog/fault → anında coast
+- Gelecekte: akım sensörü ile feedback (Phase 7+)
+
+**Yapılacak Teknik İşler:**
+- [ ] [brake] [safety] Brake akım testi — düşük duty'de başla, ölçüm yap
+- [ ] [brake] [safety] `brakeHoldMs` optimum değerini belirle (donanım testi)
+- [ ] [brake] [validation] Brake testi: yüksek hızda ani brake → akım spike ölç
+- [ ] [brake] [validation] Brake testi: düşük hızda brake → düzgün durma
+- [ ] [brake] [validation] Brake timeout testi → otomatik coast geçiş
+- [ ] [brake] [validation] Brake sırasında `s` komutu → anında coast
+- [ ] [brake] [validation] Brake sırasında watchdog → anında coast
+- [ ] [brake] [safety] Brake telemetrisi ekle (brake aktif/pasif, süre)
+- [ ] [brake] [documentation] Brake güvenlik notlarını belgele
+- [ ] [brake] [documentation] Brake test sonuçlarını belgele
+
+**Etkilenen Modüller:**
+- `applyDriveState()` — main.cpp (brake durumu)
+- `motorControlTick()` — main.cpp (brake timeout)
+- `sendTelemetry()` — main.cpp (brake durumu)
+- ISSUES.md
+
+**Riskler:**
+- Yüksek hızda ani brake → MOSFET hasarı riski
+- Brake süresi çok uzun → motor ısınması
+- Low-side short yöntemi tüm motor tiplerinde düzgün çalışmayabilir
+
+**Başarı Kriterleri:**
+- Brake düşük-orta hızda güvenli çalışıyor
+- Akım spike'i tolere edilebilir seviyede
+- Brake timeout düzgün çalışıyor
+- Brake sırasında `s` komutu anında coast'a geçiyor
+- Brake telemetrisi doğru gösteriyor
+
+**Bu faz tamamlanmadan sonraki faza geçilebilir mi:** Kısmen — temel brake çalışıyorsa devam edilebilir, ama detaylı test sonuçları olmadan üretim kararı verilmemeli
+
+---
+
+## Phase 6: Telemetry/Protection/Command Cleanup [protocol] [architecture]
+
+**Amaç:** Telemetri, protection ve komut yapısını temizlemek ve tutarlı hale getirmek.
+
+**Neden gerekli:** Brake eklendikten sonra telemetri ve komut yapısı gözden geçirilmeli. 4 motorlu yapıya hazırlık için temiz protokol gerekli.
+
+### Telemetri İyileştirmeleri
+
+**Hedef Telemetri Formatı:**
+```
+RPM:<val>,D:<duty>,DIR:<F/R>,PH:<phase>,PWM_SET:<val>,PWM_ACT:<val>,BRAKE:<0/1>,FC:<code>,H:<hall>
+```
+
+| Field | Açıklama |
+|-------|----------|
+| RPM | Hesaplanan devir |
+| D | Anlık duty cycle |
+| DIR | Yön (F/R) |
+| PH | Faz (0=Stopped, 1=Kick, 2=Running, 3=NeutralWait, 4=Fault, 5=Braking) |
+| PWM_SET | Host tarafından ayarlanan PWM |
+| PWM_ACT | Firmware'ın hedef duty'si |
+| BRAKE | Brake aktif mi (0/1) |
+| FC | Fault kodu |
+| H | Ham Hall değeri |
+
+**Yapılacak Teknik İşler:**
+- [ ] [protocol] Telemetri formatını güncelle (PWM_SET/PWM_ACT/BRAKE/FC ekle)
+- [ ] [protocol] Normal ve Python modlarını birleştir (tek format)
+- [ ] [safety] Fault kodu telemetriye ekle
+- [ ] [architecture] Command queue'da timestamp ekle (stale detection)
+- [ ] [architecture] Latest-command-wins mailbox uygula
+- [ ] [documentation] Protokol dokümantasyonunu güncelle
+
+**Etkilenen Modüller:**
+- `sendTelemetry()` — main.cpp
+- `sendPythonTelemetry()` — main.cpp (birleştirilecek)
+- `CommandItem` struct — main.cpp
+- `enqueueCommand()` / `dequeueCommand()` — main.cpp
+- ARCHITECTURE.md
+
+**Riskler:**
+- Telemetri format değişikliği Python host'u bozabilir
+- Command queue timestamp ekleme bellek kullanımını artırır
+
+**Başarı Kriterleri:**
+- Telemetri formatı tutarlı ve açık
+- Fault kodları telemetrde görünür
+- Brake durumu telemetrde görünür
+- Stale command detection çalışıyor
+
+**Bu faz tamamlanmadan sonraki faza geçilebilir mi:** Evet — bu faz iyileştirme odaklı
+
+---
+
+## Phase 7: 4 Motorlu Genişleme Hazırlığı [multi-motor] [architecture]
+
+**Amaç:** Tek motor state machine'den çok motorlu state machine'e geçiş noktalarını hazırlamak.
+
+**Neden gerekli:** Bu proje tek motor sürücü modülü. 4 motorlu yapı hub STM32 üzerinden olacak. Ama motor sürücü modülü kendisini 4 motorlu yapıya hazırlamalı.
+
+### Mevcut Durum (Tek Motor)
+
+- Tek global `motorRt` ve `hallRt` struct'ları
+- Hardcoded pin tanımları
+- Protokolde motor ID yok
+- Tek UART portu
+
+### Hedef (4 Motor Hub)
+
+- Her motor sürücü kendi STM32'sinde çalışır
+- Hub STM32 her sürücüye ayrı UART portundan bağlanır
+- Protokol motor-agnostik (her sürücü aynı komutları alır)
+- Hub motor ID'yi yönetir
+
+### Hazırlık Adımları
+
+**Motor Sürücü Modülü İçin:**
+- [ ] [multi-motor] Protokolü motor-agnostik tut (f/b/s her motor için geçerli)
+- [ ] [multi-motor] Global state'i struct içinde tut (zaten mevcut)
+- [ ] [multi-motor] Pin tanımlarını config'den oku (gelecekte)
+- [ ] [multi-motor] Brake mantığını motor bazlı genelleştir
+- [ ] [multi-motor] Telemetri formatını hub-parse edilebilir tut
+
+**Hub STM32 Hazırlığı (Ayrı Proje):**
+- [ ] [multi-motor] Hub protokol tasarımı (Python → Hub → Motor)
+- [ ] [multi-motor] Sol/sağ taraf komut grupları
+- [ ] [multi-motor] Tank turn mantığı
+- [ ] [multi-motor] Çok motorlu lease/failsafe
+- [ ] [multi-motor] Çok motorlu telemetri ve fault isolation
+
+**Etkilenen Modüller:**
+- Tüm main.cpp (motor-agnostik kalmalı)
+- Hub STM32 projesi (ayrı repo)
+
+**Riskler:**
+- Motor sürücü modülü değişmeden 4 motorlu yapı kurulamaz
+- Hub STM32 geliştirme zaman alabilir
+- Çok motorlu timing sorunları ortaya çıkabilir
+
+**Başarı Kriterleri:**
+- Motor sürücü modülü motor-agnostik kalmış
+- Protokol 4 motorlu yapıya uygun
+- Hub protokol tasarımı tamamlanmış
+
+**Bu faz tamamlanmadan sonraki faza geçilebilir mi:** Hayır — temel hazırlık tamamlanmalı
+
+---
+
+## Phase 8: Tank Steering ve Multi-Motor Control [multi-motor]
+
+**Amaç:** 4 motorlu skid-steer araç kontrolünü tamamlamak.
+
+**Neden gerekli:** Projenin nihai hedefi 4 motorlu skid-steer araç.
+
+### Skid-Steer Kontrol Mantığı
+
+| Aksiyon | Sol Motorlar | Sağ Motorlar |
+|---------|--------------|--------------|
+| İleri | f\<duty\> | f\<duty\> |
+| Geri | b\<duty\> | b\<duty\> |
+| Sol Dönüş | b\<duty\> | f\<duty\> |
+| Sağ Dönüş | f\<duty\> | b\<duty\> |
+| Spin Sol | b\<duty\> | f\<duty\> |
+| Spin Sağ | f\<duty\> | b\<duty\> |
+| Dur (coast) | s | s |
+| Dur (brake) | k | k |
+
+### Yapılacak Teknik İşler
+
+- [ ] [multi-motor] Hub STM32 projesi başlat
+- [ ] [multi-motor] Python host 4 motor desteği ekle
+- [ ] [multi-motor] Skid-steer kontrol mantığı uygula
+- [ ] [multi-motor] Tank turn modları (arcade/tank)
+- [ ] [multi-motor] 4 motorlu telemetri dashboard
+- [ ] [multi-motor] Fault isolation (bir motor bozulursa diğerleri)
+- [ ] [multi-motor] 4 motorlu brake koordinasyonu
+- [ ] [validation] 4 motorlu entegrasyon testleri
+
+**Etkilenen Modüller:**
+- Hub STM32 projesi (yeni repo)
+- Python host (güncelleme)
+- Motor sürücü modülü (test)
+
+**Riskler:**
+- Hub STM32 geliştirme zaman alabilir
+- 4 motorlu timing sorunları
+- Güç kaynağı gereksinimleri
+- Brake koordinasyonu karmaşık olabilir
+
+**Başarı Kriterleri:**
+- 4 motor eş zamanlı kontrol edilebiliyor
+- Skid-steer dönüş düzgün çalışıyor
+- Herhangi bir motor fault'ünde diğerleri güvenli duruyor
+- 4 motorlu telemetri dashboard çalışıyor
+
+**Bu faz tamamlanmadan sonraki faza geçilebilir mi:** Bu son faz
+
+---
+
+## Faz Bağımlılık Grafiği
+
+```
+Phase 0 (Belgeleme)
     │
     ▼
-Phase 1 (f/b/s Protocol)
+Phase 1 (Stabilize)
     │
     ▼
-Phase 2 (FTDI Test)
+Phase 2 (Protokol)
     │
     ▼
-Phase 3 (Python Host)
+Phase 3 (Lease/Watchdog)
     │
     ▼
-Phase 4 (Safety)
+Phase 4 (Stop/Brake Ayrımı)
     │
     ▼
-Phase 5 (Hub Prep)
+Phase 5 (Brake Güvenlik)
     │
     ▼
-Phase 6 (4-Motor Skid-Steer)
+Phase 6 (Cleanup)
+    │
+    ▼
+Phase 7 (Multi-Motor Hazırlık)
+    │
+    ▼
+Phase 8 (Tank Steering)
 ```
 
 ---
 
-## Current Status
+## Mevcut Durum
 
-| Phase | Status | Notes |
-|-------|--------|-------|
-| Phase 0 | Not started | ISSUES.md documents all issues to fix |
-| Phase 1 | Not started | Protocol design in ARCHITECTURE.md |
-| Phase 2 | Pending | Depends on Phase 1 |
-| Phase 3 | Pending | Depends on Phase 2 |
-| Phase 4 | Pending | IWDG, connection monitor |
-| Phase 5 | Pending | Hub protocol design |
-| Phase 6 | Pending | Requires hub STM32 project |
+| Faz | Durum | Notlar |
+|-----|-------|--------|
+| Phase 0 | Tamamlandı | Mevcut yapıları belgeleme |
+| Phase 1 | Tamamlandı | Queue, saveall, identify, default PWM, telemetry, timestamp, mailbox |
+| Phase 2 | Başlamadı | Protokol değişikliği |
+| Phase 3 | Tamamlandı | Lease/watchdog, Python watchdog aktif, lastMotorCommandMs tutarlılığı, host connection monitor |
+| Phase 4 | Başlamadı | Stop/brake ayrımı |
+| Phase 5 | Başlamadı | Brake test |
+| Phase 6 | Başlamadı | Temizlik |
+| Phase 7 | Başlamadı | Multi-motor hazırlık |
+| Phase 8 | Başlamadı | Tank steering |
+
+---
+
+## Bu Değişiklikler Neden Sadece Feature Değil, Mimari Karar?
+
+### Timer Tabanlı Asenkron Yapı
+
+Mevcut kodda `runMotorControlScheduler()` 60µs tick ile motor kontrolünü zamanlıyor. `hallISR()` sadece pin okuma ve flag set ediyor (hafif). UART işleme ana döngüde motor kontrolünden sonra geliyor.
+
+**Neden mimari karar:** Bu ayrım korunmazsa:
+- 4 motorlu yapıda timing garantisi verilemez
+- UART parsing motor komütasyonunu geciktirebilir
+- Motor kontrol hot path'i predictability kaybeder
+
+### Stop vs Brake Ayrımı
+
+Mevcut `stopMotorImmediate()` → `allOff()` = coast. Brake yok.
+
+**Neden mimari karar:**
+- Brake aktif bir eylem (akım tüketir, MOSFET sürer)
+- Watchdog/fault durumlarında default = güvenli durum = coast
+- Brake sadece kullanıcı kontrollü, bilinçli bir eylem olmalı
+- Bu ayrım yapılmazsa: watchdog timeout'ta motor aniden fren yapabilir (istenmeyen)
+
+### Multi-Motor Geleceğine Etkisi
+
+Motor sürücü modülü motor-agnostik kalmalı. Hub STM32 motor ID'yi yönetir. Protokol f/b/s her motor için geçerli.
+
+**Neden mimari karar:**
+- Motor sürücü modülü değişmeden 4 motorlu yapı kurulabilir
+- Hub STM32 motor ID'yi ekler, motor sürücü bilmez
+- Brake mantığı motor bazlı genelleştirilebilir
+
+---
+
+## İlk Uygulanacak 12 Teknik İş
+
+| # | İş | Faz | Etiket | Öncelik |
+|---|-----|-----|--------|---------|
+| 1 | Kuyruk if→while düzeltmesi | Phase 1 | [bugfix] | Kritik |
+| 2 | saveall mod kaydetme | Phase 1 | [bugfix] | Kritik |
+| 3 | IDENTIFY_TOGGLE_MS artırma | Phase 1 | [bugfix] | Yüksek |
+| 4 | Default PWM yapılandırılabilir | Phase 1 | [bugfix] | Yüksek |
+| 5 | Telemetri PWM_SET/PWM_ACT | Phase 1 | [architecture] | Orta |
+| 6 | f/b/s protokol parsing | Phase 2 | [protocol] | Kritik |
+| 7 | Python watchdog aktifleştirme | Phase 3 | [safety] | Kritik |
+| 8 | Lease kurallarını belgele | Phase 3 | [safety] | Yüksek |
+| 9 | MotorPhase::Braking ekle | Phase 4 | [brake] | Yüksek |
+| 10 | brakeAllLowSide() fonksiyonu | Phase 4 | [brake] | Yüksek |
+| 11 | Brake akım testi | Phase 5 | [brake] [validation] | Orta |
+| 12 | Hub protokol tasarımı | Phase 7 | [multi-motor] | Orta |

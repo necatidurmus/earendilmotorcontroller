@@ -61,6 +61,8 @@ static constexpr uint8_t  POLE_PAIRS                 = 15;
 static constexpr uint32_t TELEMETRY_INTERVAL_MS      = 100;
 // Komut gelmezse motor durdurma süresi (güvenlik)
 static constexpr uint32_t CMD_WATCHDOG_MS             = 800;
+// Komut kuyrugunda stale kabul süresi — uzerinde ise discard
+static constexpr uint32_t CMD_STALE_MS                = 500;
 
 // === Servis Modu Ayarları ===
 
@@ -68,12 +70,14 @@ static constexpr uint32_t CMD_WATCHDOG_MS             = 800;
 static constexpr uint16_t IDENTIFY_STEP_TOGGLES      = 220;
 // Identify modunda uygulanan duty değeri
 static constexpr uint8_t  IDENTIFY_DUTY              = 35;
-// Toggle arası bekleme süresi (ms)
-static constexpr uint16_t IDENTIFY_TOGGLE_MS         = 1;
+// Toggle arası bekleme süresi (ms) — motor fiziksel yanıt için
+static constexpr uint16_t IDENTIFY_TOGGLE_MS         = 50;
 // Toggle sonrası hall okuma için bekleme A (ms)
 static constexpr uint16_t IDENTIFY_SETTLE_A_MS       = 12;
 // Hall okuma için bekleme B (ms)
 static constexpr uint16_t IDENTIFY_SETTLE_B_MS       = 6;
+// Identify step geçişi arası bekleme (ms) — motor settling
+static constexpr uint16_t IDENTIFY_STEP_INTERVAL_MS  = 50;
 
 // Test modunda uygulanan duty değeri
 static constexpr uint8_t  TEST_DUTY                  = 60;
@@ -112,7 +116,7 @@ struct SavedHallMap {
   uint8_t checksum;
 };
 
-// Motor parametreleri — kick, ramp ayarları
+// Motor parametreleri — kick, ramp, default PWM ayarları
 struct SavedConfig {
   uint32_t magic;
   uint8_t version;
@@ -125,6 +129,8 @@ struct SavedConfig {
 
   uint8_t rampStep;
   uint16_t rampIntervalMs;
+
+  uint8_t defaultPwm;  // [bugfix] Python modu varsayılan PWM (EEPROM'dan okunur)
 
   uint8_t checksum;
 };
@@ -280,10 +286,11 @@ struct RxRing {
   char data[RX_RING_LEN];
 };
 
-// Komut kuyruğu elemanı
+// Komut kuyruğu elemanı — timestamp ile stale detection
 struct CommandItem {
   char text[UART_LINE_MAX];
   CommandSource src;
+  uint32_t timestampMs;  // [architecture] Komut gelis zamani
 };
 
 // Bekleyen komut istekleri — deferred apply
@@ -318,7 +325,7 @@ OperatingMode activeMode = OperatingMode::Normal;
 CommandSource serviceReplySrc = CommandSource::USB;
 
 // Python WASD modu runtime
-uint8_t  pythonPwmValue = 60;   // WASD modu PWM değeri
+uint8_t  pythonPwmValue = 150;  // [bugfix] Varsayılan PWM, config'den yüklenir
 int8_t   pythonDirection = 0;   // 0=durdu, 1=ileri, -1=geri
 
 // Runtime nesneleri — hall, motor, servis
@@ -330,6 +337,7 @@ ServiceRuntime serviceRt;
 uint32_t nextControlTickUs = 0;
 uint32_t lastTelemetryMs = 0;
 uint32_t lastMotorCommandMs = 0;
+uint32_t lastUartActivityMs = 0;  // [safety] Host connection monitor
 
 // CLI durumları — USB ve UART için ayrı
 CliLineState usbCli;
@@ -731,6 +739,7 @@ void loadDefaultConfig() {
   kickMs = 120;
   rampStep = 4;
   rampIntervalMs = 10;
+  pythonPwmValue = 150;
   clampConfig();
 }
 
@@ -745,6 +754,7 @@ uint8_t calcCfgChecksum(const SavedConfig& cfg) {
   x ^= cfg.rampStep;
   x ^= (uint8_t)(cfg.rampIntervalMs & 0xFF);
   x ^= (uint8_t)(cfg.rampIntervalMs >> 8);
+  x ^= cfg.defaultPwm;
   return x;
 }
 
@@ -759,6 +769,7 @@ bool saveConfigToStorage() {
   cfg.kickMs = kickMs;
   cfg.rampStep = rampStep;
   cfg.rampIntervalMs = rampIntervalMs;
+  cfg.defaultPwm = pythonPwmValue;
   cfg.checksum = calcCfgChecksum(cfg);
 
   EEPROM.put(EEPROM_ADDR_CFG, cfg);
@@ -786,6 +797,7 @@ bool loadConfigFromStorage() {
   kickMs = cfg.kickMs;
   rampStep = cfg.rampStep;
   rampIntervalMs = cfg.rampIntervalMs;
+  pythonPwmValue = cfg.defaultPwm;
   clampConfig();
   return true;
 }
@@ -927,6 +939,11 @@ bool rxPush(RxRing& rb, char c) {
   return true;
 }
 
+// [safety] UART aktivite zaman damgasını güncelle
+void updateUartActivity() {
+  lastUartActivityMs = millis();
+}
+
 bool rxPop(RxRing& rb, char* out) {
   if (rb.head == rb.tail) return false;
   *out = rb.data[rb.tail];
@@ -934,21 +951,46 @@ bool rxPop(RxRing& rb, char* out) {
   return true;
 }
 
+// [architecture] Latest-command-wins: ayni kaynaktan gelen motion komutlari
+// kuyrukta birikmez, son komut oncekinin ustune yazar
+static bool isMotionCommand(const char* cmd); // tanim asagida, startsWith sonrasi
+
 bool enqueueCommand(const char* cmd, CommandSource src) {
+  // Ayni kaynaktan motion komutu varsa, uzerine yaz (latest-wins)
+  if (isMotionCommand(cmd)) {
+    uint8_t idx = cmdQueueTail;
+    while (idx != cmdQueueHead) {
+      if (cmdQueue[idx].src == src && isMotionCommand(cmdQueue[idx].text)) {
+        strncpy(cmdQueue[idx].text, cmd, UART_LINE_MAX - 1);
+        cmdQueue[idx].text[UART_LINE_MAX - 1] = '\0';
+        cmdQueue[idx].timestampMs = millis();
+        return true; // mevcut entry uzerine yazildi
+      }
+      idx = (uint8_t)((idx + 1) % CMD_QUEUE_LEN);
+    }
+  }
+
   uint8_t next = (uint8_t)((cmdQueueHead + 1) % CMD_QUEUE_LEN);
   if (next == cmdQueueTail) return false;
 
   strncpy(cmdQueue[cmdQueueHead].text, cmd, UART_LINE_MAX - 1);
   cmdQueue[cmdQueueHead].text[UART_LINE_MAX - 1] = '\0';
   cmdQueue[cmdQueueHead].src = src;
+  cmdQueue[cmdQueueHead].timestampMs = millis();
   cmdQueueHead = next;
   return true;
 }
 
-// Komut kuyruğundan dequeue — bir komut çıkar
+// Komut kuyrugundan dequeue — stale command discard
 bool dequeueCommand(CommandItem* out) {
   if (cmdQueueHead == cmdQueueTail) return false;
   *out = cmdQueue[cmdQueueTail];
+  // [architecture] Stale command discard: 500ms'den eski komutlar atlanir
+  uint32_t now = millis();
+  if ((uint32_t)(now - out->timestampMs) > CMD_STALE_MS) {
+    cmdQueueTail = (uint8_t)((cmdQueueTail + 1) % CMD_QUEUE_LEN);
+    return false; // stale, isleme
+  }
   cmdQueueTail = (uint8_t)((cmdQueueTail + 1) % CMD_QUEUE_LEN);
   return true;
 }
@@ -1021,6 +1063,16 @@ bool startsWith(const char* s, const char* prefix) {
     if (*s++ != *prefix++) return false;
   }
   return true;
+}
+
+// [architecture] Latest-command-wins helper
+static bool isMotionCommand(const char* cmd) {
+  if (cmd[0] == '\0') return false;
+  char c = cmd[0];
+  if (c == 'f' || c == 'b' || c == 's' || c == 'w' || c == 'x' || c == 'd' || c == 'a') return true;
+  if (strcmp(cmd, "stop") == 0 || strcmp(cmd, "forward") == 0 || strcmp(cmd, "backward") == 0) return true;
+  if (startsWith(cmd, "pwm")) return true;
+  return false;
 }
 
 bool parseLongAfterPrefix(const char* s, const char* prefix, long* out) {
@@ -1369,7 +1421,7 @@ void updateServiceIdentify() {
       serviceRt.identifyPhase = IdentifyPhase::Toggle;
       serviceRt.identifyToggleCounter = 0;
       serviceRt.identifyToggleFlip = false;
-      serviceRt.nextActionMs = now + 1;
+      serviceRt.nextActionMs = now + IDENTIFY_STEP_INTERVAL_MS;
       break;
     }
 
@@ -1466,6 +1518,7 @@ void processCommand(char* cmd, CommandSource src) {
     v = clampValue<long>(v, 0, 255);
     pendingReq.hasTargetDutyUpdate = true;
     pendingReq.requestedTargetDuty = (uint8_t)v;
+    lastMotorCommandMs = millis();
     replyFC(src, F("[OK] Requested TargetDuty="));
     replyLn(src, (uint8_t)v);
     return;
@@ -1516,6 +1569,14 @@ void processCommand(char* cmd, CommandSource src) {
     return;
   }
 
+  // [bugfix] Default PWM ayarlama komutu
+  if (parseLongAfterPrefix(cmd, "defpwm ", &v)) {
+    pythonPwmValue = (uint8_t)clampValue<long>(v, 0, 255);
+    replyFC(src, F("[OK] DefaultPWM="));
+    replyLn(src, pythonPwmValue);
+    return;
+  }
+
   if (strcmp(cmd, "savecfg") == 0) {
     clampConfig();
     bool ok = saveConfigToStorage();
@@ -1538,17 +1599,22 @@ void processCommand(char* cmd, CommandSource src) {
     return;
   }
 
+  // [bugfix] saveall: hall map + config + mode persistence
   if (strcmp(cmd, "saveall") == 0) {
     bool ok1 = false;
     bool ok2 = false;
+    bool ok3 = false;
     if (validateCurrentHallMap()) ok1 = saveHallMapToStorage();
     clampConfig();
     ok2 = saveConfigToStorage();
+    ok3 = saveModeToStorage();
 
     replyFC(src, F("[INFO] saveall map="));
     reply(src, ok1 ? F("OK") : F("FAIL"));
     replyFC(src, F(" cfg="));
-    replyLn(src, ok2 ? F("OK") : F("FAIL"));
+    reply(src, ok2 ? F("OK") : F("FAIL"));
+    replyFC(src, F(" mode="));
+    replyLn(src, ok3 ? F("OK") : F("FAIL"));
     return;
   }
 
@@ -1645,7 +1711,7 @@ void processCommand(char* cmd, CommandSource src) {
     // Python moduna geçerken pending istekleri temizle
     memset(&pendingReq, 0, sizeof(pendingReq));
     activeMode = OperatingMode::Python;
-    pythonPwmValue = 60;
+    // [bugfix] pythonPwmValue config'den gelir, hardcoded 60 yerine
     pythonDirection = 0;
     bool saved = saveModeToStorage();
     replyLn(src, saved ? F("[OK] Mode=PYTHON (saved)") : F("[OK] Mode=PYTHON (save fail)"));
@@ -1686,9 +1752,11 @@ void processCommand(char* cmd, CommandSource src) {
   replyLn(src, F("[ERR] Unknown command"));
 }
 
+// [bugfix] Kuyruk darboğazı: if→while, max 8 iterasyon (loop starvation önleme)
 void processQueuedCommands() {
   CommandItem item;
-  if (dequeueCommand(&item)) {
+  uint8_t budget = CMD_QUEUE_LEN;
+  while (budget-- && dequeueCommand(&item)) {
     processCommand(item.text, item.src);
   }
 }
@@ -1754,6 +1822,7 @@ void processPythonCommand(char* cmd, CommandSource src) {
 
   // W = ileri — motor çalışır, durdurana kadar devam eder
   if (strcmp(cmd, "w") == 0) {
+    lastMotorCommandMs = millis();
     if (pythonDirection == 1 && isMotorDriveActive()) {
       // Zaten ileri gidiyor, sadece PWM güncelle (eğer değişmişse)
       if (motorRt.targetDuty != pythonPwmValue) {
@@ -1777,6 +1846,7 @@ void processPythonCommand(char* cmd, CommandSource src) {
 
   // S = geri — motor çalışır, durdurana kadar devam eder
   if (strcmp(cmd, "s") == 0) {
+    lastMotorCommandMs = millis();
     if (pythonDirection == -1 && isMotorDriveActive()) {
       // Zaten geri gidiyor, sadece PWM güncelle (eğer değişmişse)
       if (motorRt.targetDuty != pythonPwmValue) {
@@ -1850,9 +1920,11 @@ void processPythonCommand(char* cmd, CommandSource src) {
   processCommand(cmd, src);
 }
 
+// [bugfix] Kuyruk darboğazı: if→while, max 8 iterasyon
 void processPythonQueuedCommands() {
   CommandItem item;
-  if (dequeueCommand(&item)) {
+  uint8_t budget = CMD_QUEUE_LEN;
+  while (budget-- && dequeueCommand(&item)) {
     processPythonCommand(item.text, item.src);
   }
 }
@@ -1866,7 +1938,7 @@ void sendPythonTelemetry(uint32_t nowMs) {
 
   uint32_t rpm = calculateRPM();
 
-  // Python controller format: RPM:<val>,D:<duty>,DIR:<F/R>,PH:<phase>,PWM:<set>,PDIR:<pydir>,H:<hall>
+  // [architecture] PWM_SET: host set value, PWM_ACT: firmware target duty
   CMD.print(F("RPM:"));
   CMD.print(rpm);
   CMD.print(F(",D:"));
@@ -1875,6 +1947,10 @@ void sendPythonTelemetry(uint32_t nowMs) {
   CMD.print(motorRt.direction > 0 ? 'F' : 'R');
   CMD.print(F(",PH:"));
   CMD.print((uint8_t)motorRt.phase);
+  CMD.print(F(",PWM_SET:"));
+  CMD.print(pythonPwmValue);
+  CMD.print(F(",PWM_ACT:"));
+  CMD.print(motorRt.targetDuty);
   CMD.print(F(",PWM:"));
   CMD.print(pythonPwmValue);
   CMD.print(F(",PDIR:"));
@@ -1887,8 +1963,10 @@ void sendPythonTelemetry(uint32_t nowMs) {
     Serial.print(rpm);
     Serial.print(F(" D:"));
     Serial.print(motorRt.currentDuty);
-    Serial.print(F(" PWM:"));
+    Serial.print(F(" PWM_SET:"));
     Serial.print(pythonPwmValue);
+    Serial.print(F(" PWM_ACT:"));
+    Serial.print(motorRt.targetDuty);
     Serial.print(F(" DIR:"));
     Serial.print(pythonDirection);
     Serial.print(F(" H:"));
@@ -2041,7 +2119,7 @@ void sendTelemetry(uint32_t nowMs) {
 
   uint32_t rpm = calculateRPM();
 
-  // CMD (UART) — Python controller reads this
+  // [architecture] PWM_ACT: firmware hedef duty, PWM: backward compat
   CMD.print(F("RPM:"));
   CMD.print(rpm);
   CMD.print(F(",D:"));
@@ -2050,10 +2128,14 @@ void sendTelemetry(uint32_t nowMs) {
   CMD.print(motorRt.direction > 0 ? 'F' : 'R');
   CMD.print(F(",PH:"));
   CMD.print((uint8_t)motorRt.phase);
+  CMD.print(F(",PWM_ACT:"));
+  CMD.print(motorRt.targetDuty);
   CMD.print(F(",PWM:"));
   CMD.print(motorRt.targetDuty);
   CMD.print(F(",PDIR:"));
-  CMD.println(motorRt.direction > 0 ? 1 : -1);
+  CMD.print(motorRt.direction > 0 ? 1 : -1);
+  CMD.print(F(",H:"));
+  CMD.println(hallRt.stableRaw);
 
   // USB debug (sadece verbose modda)
   if (verboseDebug) {
@@ -2065,6 +2147,8 @@ void sendTelemetry(uint32_t nowMs) {
     Serial.print(motorRt.direction > 0 ? 'F' : 'R');
     Serial.print(F(",PH:"));
     Serial.print((uint8_t)motorRt.phase);
+    Serial.print(F(",PWM_ACT:"));
+    Serial.print(motorRt.targetDuty);
     Serial.print(F(",PWM:"));
     Serial.print(motorRt.targetDuty);
     Serial.print(F(",PDIR:"));
@@ -2082,6 +2166,20 @@ void checkCommandWatchdog(uint32_t nowMs) {
     CMD.println(F("[WARN] WD stop"));
     Serial.println(F("[WARN] Watchdog auto-stop"));
     lastMotorCommandMs = 0;
+  }
+}
+
+// Host connection monitor — 2sn UART aktivite yoksa motor durdur
+static constexpr uint32_t HOST_DISCONNECT_TIMEOUT_MS = 2000;
+void checkHostConnection(uint32_t nowMs) {
+  if (!isMotorDriveActive()) return;
+  if (lastUartActivityMs == 0) return;
+
+  if ((uint32_t)(nowMs - lastUartActivityMs) > HOST_DISCONNECT_TIMEOUT_MS) {
+    stopMotorImmediate();
+    CMD.println(F("[WARN] Host disconnect stop"));
+    Serial.println(F("[WARN] Host disconnect auto-stop"));
+    lastUartActivityMs = 0;
   }
 }
 
@@ -2178,8 +2276,14 @@ void loop() {
   runMotorControlScheduler();
 
   // RX toplama
-  uartDrainToRing(Serial, usbRx);
-  uartDrainToRing(CMD, cmdRx);
+  if (Serial.available()) {
+    updateUartActivity();
+    uartDrainToRing(Serial, usbRx);
+  }
+  if (CMD.available()) {
+    updateUartActivity();
+    uartDrainToRing(CMD, cmdRx);
+  }
 
   // ring -> line -> command queue
   processRxRingToLines(usbRx, usbCli, CommandSource::USB);
@@ -2195,7 +2299,11 @@ void loop() {
     // Python telemetri (RPM + PWM set değeri)
     sendPythonTelemetry(nowMs);
 
-    // Python modunda watchdog yok — motor X ile durdurana kadar çalışır
+    // Python modunda watchdog aktif — lease timeout ile failsafe
+    checkCommandWatchdog(nowMs);
+
+    // Host connection monitor — UART aktivite yoksa durdur
+    checkHostConnection(nowMs);
   } else if (activeMode == OperatingMode::Settings) {
     // Settings modu — temiz monitör, tüm komutlar çalışır
     processQueuedCommands();
@@ -2203,11 +2311,13 @@ void loop() {
     // Telemetry YOK — temiz monitör
     // Watchdog AKTİF — güvenlik için
     checkCommandWatchdog(nowMs);
+    checkHostConnection(nowMs);
   } else {
     // Normal mod — tam CLI
     processQueuedCommands();
     updateServiceTask();
     sendTelemetry(nowMs);
     checkCommandWatchdog(nowMs);
+    checkHostConnection(nowMs);
   }
 }
