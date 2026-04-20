@@ -1069,7 +1069,7 @@ bool startsWith(const char* s, const char* prefix) {
 static bool isMotionCommand(const char* cmd) {
   if (cmd[0] == '\0') return false;
   char c = cmd[0];
-  if (c == 'f' || c == 'b' || c == 's' || c == 'w' || c == 'x' || c == 'd' || c == 'a') return true;
+  if (c == 'f' || c == 'b' || c == 's') return true;
   if (strcmp(cmd, "stop") == 0 || strcmp(cmd, "forward") == 0 || strcmp(cmd, "backward") == 0) return true;
   if (startsWith(cmd, "pwm")) return true;
   return false;
@@ -1762,8 +1762,8 @@ void processQueuedCommands() {
 }
 
 // ============================================================
-// Python Mode WASD Handler — Python Modu Komut İşleme
-// W/S ileri/geri, A/D hız +/-, X durdur
+// Python Mode f/b/s Handler — Python Modu Komut İşleme
+// f=ileri, b=geri, s=dur, f<duty>/b<duty>=direkt duty
 // ============================================================
 void processPythonCommand(char* cmd, CommandSource src) {
   trimInPlace(cmd);
@@ -1820,11 +1820,10 @@ void processPythonCommand(char* cmd, CommandSource src) {
     return;
   }
 
-  // W = ileri — motor çalışır, durdurana kadar devam eder
-  if (strcmp(cmd, "w") == 0) {
+  // f = ileri varsayılan PWM
+  if (strcmp(cmd, "f") == 0) {
     lastMotorCommandMs = millis();
     if (pythonDirection == 1 && isMotorDriveActive()) {
-      // Zaten ileri gidiyor, sadece PWM güncelle (eğer değişmişse)
       if (motorRt.targetDuty != pythonPwmValue) {
         pendingReq.hasTargetDutyUpdate = true;
         pendingReq.requestedTargetDuty = pythonPwmValue;
@@ -1833,7 +1832,6 @@ void processPythonCommand(char* cmd, CommandSource src) {
       CMD.println(pythonPwmValue);
       return;
     }
-    // Yön değişimi veya yeni başlatma
     pythonDirection = 1;
     pendingReq.hasTargetDutyUpdate = true;
     pendingReq.requestedTargetDuty = pythonPwmValue;
@@ -1844,11 +1842,25 @@ void processPythonCommand(char* cmd, CommandSource src) {
     return;
   }
 
-  // S = geri — motor çalışır, durdurana kadar devam eder
-  if (strcmp(cmd, "s") == 0) {
+  // f<duty> = ileri + duty birleşik
+  if (cmd[0] == 'f' && cmd[1] >= '0' && cmd[1] <= '9') {
+    long duty = strtol(cmd + 1, nullptr, 10);
+    duty = clampValue<long>(duty, 0, 255);
+    lastMotorCommandMs = millis();
+    pythonDirection = 1;
+    pendingReq.hasTargetDutyUpdate = true;
+    pendingReq.requestedTargetDuty = (uint8_t)duty;
+    pendingReq.hasRunRequest = true;
+    pendingReq.runDirection = 1;
+    CMD.print(F("OK:FWD,PWM:"));
+    CMD.println(duty);
+    return;
+  }
+
+  // b = geri varsayılan PWM
+  if (strcmp(cmd, "b") == 0) {
     lastMotorCommandMs = millis();
     if (pythonDirection == -1 && isMotorDriveActive()) {
-      // Zaten geri gidiyor, sadece PWM güncelle (eğer değişmişse)
       if (motorRt.targetDuty != pythonPwmValue) {
         pendingReq.hasTargetDutyUpdate = true;
         pendingReq.requestedTargetDuty = pythonPwmValue;
@@ -1857,7 +1869,6 @@ void processPythonCommand(char* cmd, CommandSource src) {
       CMD.println(pythonPwmValue);
       return;
     }
-    // Yön değişimi veya yeni başlatma
     pythonDirection = -1;
     pendingReq.hasTargetDutyUpdate = true;
     pendingReq.requestedTargetDuty = pythonPwmValue;
@@ -1868,37 +1879,27 @@ void processPythonCommand(char* cmd, CommandSource src) {
     return;
   }
 
-  // X veya stop = dur komutu
-  if (strcmp(cmd, "x") == 0 || strcmp(cmd, "stop") == 0) {
+  // b<duty> = geri + duty birleşik
+  if (cmd[0] == 'b' && cmd[1] >= '0' && cmd[1] <= '9') {
+    long duty = strtol(cmd + 1, nullptr, 10);
+    duty = clampValue<long>(duty, 0, 255);
+    lastMotorCommandMs = millis();
+    pythonDirection = -1;
+    pendingReq.hasTargetDutyUpdate = true;
+    pendingReq.requestedTargetDuty = (uint8_t)duty;
+    pendingReq.hasRunRequest = true;
+    pendingReq.runDirection = -1;
+    CMD.print(F("OK:REV,PWM:"));
+    CMD.println(duty);
+    return;
+  }
+
+  // s = dur (coast stop)
+  if (strcmp(cmd, "s") == 0 || strcmp(cmd, "stop") == 0) {
     pythonDirection = 0;
     pendingReq.hasStopRequest = true;
+    lastMotorCommandMs = 0;
     CMD.println(F("OK:STOP"));
-    return;
-  }
-
-  // D veya + = PWM artır (hız artır)
-  if (strcmp(cmd, "d") == 0 || strcmp(cmd, "+") == 0) {
-    pythonPwmValue = clampValue<uint8_t>(pythonPwmValue + 10, 0, 255);
-    if (pythonDirection != 0) {
-      pendingReq.hasTargetDutyUpdate = true;
-      pendingReq.requestedTargetDuty = pythonPwmValue;
-      lastMotorCommandMs = millis();
-    }
-    CMD.print(F("PWM:"));
-    CMD.println(pythonPwmValue);
-    return;
-  }
-
-  // A veya - = PWM azalt (hız azalt)
-  if (strcmp(cmd, "a") == 0 || strcmp(cmd, "-") == 0) {
-    pythonPwmValue = (pythonPwmValue >= 10) ? (pythonPwmValue - 10) : 0;
-    if (pythonDirection != 0) {
-      pendingReq.hasTargetDutyUpdate = true;
-      pendingReq.requestedTargetDuty = pythonPwmValue;
-      lastMotorCommandMs = millis();
-    }
-    CMD.print(F("PWM:"));
-    CMD.println(pythonPwmValue);
     return;
   }
 

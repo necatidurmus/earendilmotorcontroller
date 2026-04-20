@@ -34,8 +34,8 @@ Not: Upload protocol = ST-Link (platformio.ini). LSP hataları (Arduino.h not fo
 ## Proje Yapısı
 
 ```
-src/main.cpp              — tüm firmware (2213 satır, tek dosya)
-tools/wasd_controller.py  — Python host (WASD UI, legacy)
+src/main.cpp              — tüm firmware (2324 satır, tek dosya)
+tools/wasd_controller.py  — Python host (f/b/s UI)
 docs/README.md            — proje dokümantasyonu
 docs/ARCHITECTURE.md      — teknik mimari
 docs/ROADMAP.md           — 7 fazlı yol haritası
@@ -50,7 +50,7 @@ AGENTS.md                 — bu dosya
 
 - Tek motor sürücü modülü — STM32 Black Pill F411CE
 - 6-step BLDC komütasyon — Hall sensör geri bildirimli
-- 3 çalışma modu: Normal (CLI), Python (WASD), Settings (temiz monitör)
+- 3 çalışma modu: Normal (CLI), Python (f/b/s), Settings (temiz monitör)
 - Motor tick: 60µs (16.6kHz), motorControlTick() ana döngüde
 - UART: 115200 baud, PA2(TX) PA3(RX)
 - EEPROM: Hall map, config, mod kalıcılığı
@@ -80,45 +80,35 @@ Fazlar: Stopped(0), Kick(1), Running(2), NeutralWait(3), Fault(4)
 4. processQueuedCommands()       — komutları işle
 5. updateServiceTask()           — scan/test/identify
 6. sendTelemetry()               — telemetri gönder
-7. checkCommandWatchdog()        — failsafe (Normal/Settings)
+7. checkCommandWatchdog()        — failsafe (tüm modlarda)
 ```
 
 ---
 
 ## UART Protokolü
 
-### Mevcut (Legacy WASD)
+### f/b/s Protokolü
 
-w=ileri, s=geri, x=dur, d=PWM+10, a=PWM-10
-
-### Hedef (f/b/s)
-
-f=ileri varsayılan PWM, f<duty>=ileri duty(0-255), b=geri, b<duty>=geri duty, s=dur
+f=ileri varsayılan PWM, f<duty>=ileri duty(0-255), b=geri varsayılan PWM, b<duty>=geri duty, s=dur (coast stop)
 
 Lease: Her hareket komutu zaman damgasını yeniler. 800ms komut gelmezse motor durur.
 
 ### Telemetri Formatı
 
 ```
-RPM:0,D:0,DIR:F,PH:2,PWM:150,PDIR:1,H:3
+RPM:0,D:0,DIR:F,PH:2,PWM_SET:150,PWM_ACT:0,PDIR:1,H:3
 ```
 
-RPM=devir, D=mevcut duty, DIR=F/R, PH=faz(0-4), PWM=hedef duty, PDIR=yön(1/-1/0), H=ham Hall
+RPM=devir, D=mevcut duty, DIR=F/R, PH=faz(0-4), PWM_SET=hedef duty, PWM_ACT=firmware duty, PDIR=yön(1/-1/0), H=ham Hall
 
 ---
 
 ## Kritik Bilinen Sorunlar
 
-| Sorun | Öncelik | Çözüm |
+| Sorun | Öncelik | Durum |
 |-------|---------|-------|
-| Kuyruk 1 komut/işlem | Kritik | if→while |
-| Watchdog Python'da kapalı | Yüksek | checkCommandWatchdog() ekle |
-| Donanımsal watchdog yok | Yüksek | IWDG ekle (Faz 4) |
-| Dead-time yok | Yüksek | Test et, delayMicroseconds ekle |
-| Varsayılan PWM 60 | Orta | EEPROM'dan ayarlanabilir yap |
-| Telemetri PWM karışıklığı | Orta | PWM_SET/PWM_ACT kullan |
-| saveall mod kaydetmiyor | Orta | saveModeToStorage() ekle |
-| Identify step 1ms | Orta | 50-100ms'ye çıkar |
+| Donanımsal watchdog yok | Yüksek | ❌ Çözülmedi |
+| Dead-time yok | Yüksek | ❌ Çözülmedi |
 
 Detay: docs/ISSUES.md
 
@@ -128,10 +118,10 @@ Detay: docs/ISSUES.md
 
 Git tag'leri her faz bitiminde:
 - v0.1.0 — Dokümantasyon baseline
-- v0.2.0 — Phase 0 (bug düzeltmeleri)
-- v0.3.0 — Phase 1 (f/b/s protokolü)
+- v0.4.0 — Phase 1+3 (stabilize, watchdog/failsafe)
+- v0.5.0 — Phase 2 (f/b/s protokolü)
 
-Faz sırası: Stabilize → f/b/s → FTDI test → Python → Güvenlik → Hub → 4 motor
+Faz sırası: Stabilize → f/b/s → Lease → Brake → Cleanup → Multi-Motor → Tank Steering
 
 ---
 
@@ -139,7 +129,6 @@ Faz sırası: Stabilize → f/b/s → FTDI test → Python → Güvenlik → Hub
 
 - Motor çalışıyor! Test sırasında fiziksel acil durdurma hazır olmalı
 - Dead-time yok — MOSFET hasarı riski, sınırlı akım kaynağı kullan
-- Python modunda watchdog yok — host çöküşünde motor çalışmaya devam eder
 - Donanımsal watchdog yok — firmware takılırsa motor çalışmaya devam eder
 - Prototip — üretim için uygun değil
 
@@ -164,10 +153,10 @@ UART: PA2(TX), PA3(RX)
 
 ## Hızlı Referans
 
-Tek dosya: src/main.cpp (2213 satır)
+Tek dosya: src/main.cpp (2324 satır)
 Modlar: Normal/Python/Settings
-Protokol: WASD (geçici) → f/b/s (hedef)
-Watchdog: 800ms, sadece Normal/Settings
+Protokol: f/b/s
+Watchdog: 800ms, tüm modlarda aktif
 EEPROM: Hall map(addr 0), config(addr 64), mod(addr 128)
 Motor tick: 60µs
 Dökümanlar: docs/ klasöründe

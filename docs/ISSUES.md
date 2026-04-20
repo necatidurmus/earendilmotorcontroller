@@ -56,7 +56,7 @@ analogWrite(newH, dutyCycle);
 
 **Status:** ✅ FIXED (v0.3.0)
 
-`loop()` Python branch'te `checkCommandWatchdog(nowMs)` eklendi. `processPythonCommand()` içinde `w` ve `s` komutları `lastMotorCommandMs = millis()` ile lease yeniliyor. Python host ~600ms heartbeat ile watchdog timeout (800ms) öncesinde komut göndermeli.
+`loop()` Python branch'te `checkCommandWatchdog(nowMs)` eklendi. `processPythonCommand()` içinde `f` ve `b` komutları `lastMotorCommandMs = millis()` ile lease yeniliyor. Python host ~600ms heartbeat ile watchdog timeout (800ms) öncesinde komut göndermeli.
 
 ---
 
@@ -155,22 +155,9 @@ Normal modda `PWM_ACT:` (firmware target duty), Python modda `PWM_SET:` (host se
 
 ### ISSUE-11: Ring Buffer / Command Queue Has No Timestamp
 
-| Field | Detail |
-|-------|--------|
-| **Priority** | Low |
-| **Type** | Design Concern |
-| **File** | `src/main.cpp:929-938` (enqueueCommand), `src/main.cpp:940-947` (dequeueCommand) |
-| **Function** | `enqueueCommand()`, `dequeueCommand()` |
+**Status:** ✅ FIXED (v0.3.0)
 
-**Current Behavior:** Commands are queued without timestamps. The `RxRing` and `CommandQueue` structures store command text and source but not arrival time.
-
-**Expected Behavior:** Commands could be timestamped on enqueue to allow stale command detection and discard.
-
-**Technical Impact:** Under high load or slow processing, old commands may be executed long after they were sent. For motion commands, this could result in unexpected motor behavior (e.g., a stop command from 2 seconds ago being applied after a new forward command).
-
-**Recommended Fix:** Add timestamp field to `CommandItem`. Discard commands older than a threshold (e.g., 500ms) in `dequeueCommand()`.
-
-**Evidence Status:** Verified — `CommandItem` struct has no timestamp field.
+`CommandItem` struct'una `timestampMs` eklendi. `enqueueCommand()` timestamp yazıyor. `dequeueCommand()` `CMD_STALE_MS` (500ms) üzerindeki komutları discard ediyor.
 
 ---
 
@@ -190,11 +177,7 @@ The following issues from the previous `problems.md` have been re-evaluated and 
 
 **Previous Claim:** In Python mode, "s" (backward) falls through to `processCommand()` which interprets it as "stop".
 
-**Reality:** `processPythonCommand()` has an explicit `strcmp(cmd, "s") == 0` check at line 1779 that catches "s" as backward and returns. The fallthrough to `processCommand()` only occurs for commands that match NO Python-specific handler. "s" is always caught by the Python handler.
-
-**Status:** FALSE — wasd_controller.py sends "s" → processPythonCommand catches it → handles as backward → returns. No conflict.
-
-**Note:** This issue becomes irrelevant with the upcoming f/b/s protocol transition (WASD commands will be removed).
+**Status:** IRRELEVANT — Phase 2 f/b/s protokolüne geçildi. Artık Python modunda `s` = stop, `b` = backward. Conflict yok.
 
 ---
 
@@ -242,21 +225,21 @@ The following issues from the previous `problems.md` have been re-evaluated and 
 
 | ID | Priority | Type | File | Summary |
 |----|----------|------|------|---------|
-| ISSUE-01 | ✅ Fixed | Bug | main.cpp:1689, 1853 | Queue processes only 1 command/iteration → if→while |
-| ISSUE-02 | High | Safety Risk | main.cpp:614-632 | No software dead-time in drive transitions |
-| ISSUE-03 | High | Safety Risk | main.cpp:2188-2198 | Watchdog disabled in Python mode |
-| ISSUE-04 | ✅ Fixed | Design | main.cpp:271, 1648 | Default PWM hardcoded to 60 → EEPROM configurable (150) |
-| ISSUE-05 | ✅ Fixed | Design | main.cpp:2053, 1878 | Telemetry "PWM" field → PWM_SET/PWM_ACT + backward compat |
-| ISSUE-06 | ✅ Fixed | Bug | main.cpp:1538-1552 | saveall doesn't save operating mode → saveModeToStorage added |
-| ISSUE-07 | ✅ Fixed | Bug | main.cpp:1326 | Identify step transition too fast (1ms) → 50ms |
+| ISSUE-01 | ✅ Fixed | Bug | main.cpp | Queue processes only 1 command/iteration → if→while |
+| ISSUE-02 | High | Safety Risk | main.cpp:629-633 | No software dead-time in drive transitions |
+| ISSUE-03 | ✅ Fixed | Safety Risk | main.cpp:2303 | Watchdog disabled in Python mode |
+| ISSUE-04 | ✅ Fixed | Design | main.cpp:133 | Default PWM hardcoded to 60 → EEPROM configurable (150) |
+| ISSUE-05 | ✅ Fixed | Design | main.cpp:1950 | Telemetry "PWM" field → PWM_SET/PWM_ACT + backward compat |
+| ISSUE-06 | ✅ Fixed | Bug | main.cpp:1610 | saveall doesn't save operating mode → saveModeToStorage added |
+| ISSUE-07 | ✅ Fixed | Bug | main.cpp:74 | Identify step transition too fast (1ms) → 50ms |
 | ISSUE-08 | High | Safety Risk | Entire project | No hardware watchdog (IWDG) |
-| ISSUE-09 | Low | Doc Bug | main.cpp:2022 | RPM calculation comment incorrect |
-| ISSUE-10 | Low | Design | main.cpp:1003-1010 | beginRunRequest same-direction duty update unclear |
-| ISSUE-11 | Low | Design | main.cpp:929-938 | Command queue has no timestamps |
-| ISSUE-12 | Low | Design | main.cpp (multiple) | lastMotorCommandMs update inconsistent |
+| ISSUE-09 | Low | Doc Bug | main.cpp:2110 | RPM calculation comment incorrect |
+| ISSUE-10 | Low | Design | main.cpp:1160 | beginRunRequest same-direction duty update unclear |
+| ISSUE-11 | ✅ Fixed | Design | main.cpp:293, 990 | Command queue has no timestamps |
+| ISSUE-12 | ✅ Fixed | Design | main.cpp (multiple) | lastMotorCommandMs update inconsistent |
 
-| FALSE-01 | — | False Claim | main.cpp:1779 | "s" command conflict (Python handler catches it) |
-| FALSE-02 | — | Exaggerated | wasd_controller.py:127 | Heartbeat thread "useless" (correctly designed, unreachable) |
-| FALSE-03 | — | Exaggerated | wasd_controller.py:203 | Phase list missing entry (naming inconsistency only) |
+| FALSE-01 | — | Resolved | main.cpp | "s" command conflict — f/b/s protokolüne geçildi, geçersiz |
+| FALSE-02 | — | Exaggerated | wasd_controller.py | Heartbeat thread "useless" (f/b/s ile tekrar değerlendirilmeli) |
+| FALSE-03 | — | Exaggerated | wasd_controller.py | Phase list missing entry (naming inconsistency only) |
 | UNVERIFIED-01 | — | Unverified | main.cpp:loop() | UART processing delay from motor tick |
-| UNVERIFIED-02 | — | Unverified | main.cpp:processRxRingToLines | UART parsing affects commutation |
+| UNVERIFIED-02 | — | Unverified | main.cpp:processRxRingToLines | UART parsing affects commutation timing |

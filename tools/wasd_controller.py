@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-BLDC Motor WASD Controller — Hold-to-Run PWM Hız Kontrolü
-==========================================================
+BLDC Motor f/b/s Controller — Hold-to-Run PWM Hız Kontrolü
+============================================================
 Firmware'da "mode python" aktifken çalışır.
-Motor W/S tuşuna basılı tutunca döner, bırakınca durur.
-wwww
-  W → İleri (basılı tut — bırakınca durur)
-  S → Geri  (basılı tut — bırakınca durur)
+Motor F/B tuşuna basılı tutunca döner, bırakınca durur.
+
+  F → İleri (basılı tut — bırakınca durur)
+  B → Geri  (basılı tut — bırakınca durur)
   D / ↑ → PWM artır (+10) — hız yükselir
   A / ↓ → PWM azalt (-10) — hız düşer
-  X → Motoru durdur
+  S → Motoru durdur (coast)
   Q → Çıkış (motor durur, normal moda döner)
 
 Kullanım:
@@ -90,25 +90,25 @@ class MotorController:
 
     def restore_normal_mode(self):
         """Çıkışta normal moda dön"""
-        self.send_command("x")
+        self.send_command("s")
         time.sleep(0.05)
         self.send_command("mode normal")
         time.sleep(0.1)
 
     def forward(self):
-        """W — ileri başlat, durdurana kadar çalışır"""
+        """F — ileri başlat, durdurana kadar çalışır"""
         self.direction = 1
-        self.send_command("w")
+        self.send_command("f")
 
     def backward(self):
-        """S — geri başlat, durdurana kadar çalışır"""
+        """B — geri başlat, durdurana kadar çalışır"""
         self.direction = -1
-        self.send_command("s")
+        self.send_command("b")
 
     def stop(self):
-        """X — motoru durdur"""
+        """S — motoru durdur (coast)"""
         self.direction = 0
-        self.send_command("x")
+        self.send_command("s")
 
     def pwm_up(self):
         """D/↑ — PWM artır, hız yükselir"""
@@ -119,15 +119,15 @@ class MotorController:
         self.send_command("a")
 
     def set_key(self, key):
-        """Hold-to-run: W/S basıldığında çağrılır. None = bırakıldı."""
+        """Hold-to-run: F/B basıldığında çağrılır. None = bırakıldı."""
         self.key_held = key
-        if key in ("w", "s"):
+        if key in ("f", "b"):
             self.send_command(key)
 
     def _sender_loop(self):
         """Heartbeat: key_held True iken 0.5s'de bir komut tekrar gönder."""
         while self.running:
-            if self.key_held in ("w", "s"):
+            if self.key_held in ("f", "b"):
                 self.send_command(self.key_held)
                 time.sleep(0.5)
             else:
@@ -284,15 +284,15 @@ def draw_ui(stdscr, ctrl, port):
 
         # ═══ Kontroller ═══
         stdscr.addstr(3, 2, "── Kontroller ──", curses.A_BOLD | curses.A_DIM)
-        stdscr.addstr(4, 4, "[W]", GREEN | curses.A_BOLD)
+        stdscr.addstr(4, 4, "[F]", GREEN | curses.A_BOLD)
         stdscr.addstr(4, 8, "İleri (basılı tut)")
-        stdscr.addstr(4, 28, "[S]", RED | curses.A_BOLD)
+        stdscr.addstr(4, 28, "[B]", RED | curses.A_BOLD)
         stdscr.addstr(4, 32, "Geri (basılı tut)")
         stdscr.addstr(5, 4, "[D/↑]", YELLOW | curses.A_BOLD)
         stdscr.addstr(5, 10, "Hız +10")
         stdscr.addstr(5, 24, "[A/↓]", YELLOW | curses.A_BOLD)
         stdscr.addstr(5, 30, "Hız -10")
-        stdscr.addstr(6, 4, "[X]", MAGENTA | curses.A_BOLD)
+        stdscr.addstr(6, 4, "[S]", MAGENTA | curses.A_BOLD)
         stdscr.addstr(6, 8, "DUR (veya tuş bırak)")
         stdscr.addstr(6, 32, "[Q]", curses.A_BOLD)
         stdscr.addstr(6, 36, "Çıkış")
@@ -418,21 +418,21 @@ def main(stdscr):
 
             if key == ord("q") or key == ord("Q"):
                 break
-            elif key == ord("w") or key == ord("W"):
-                ctrl.set_key("w")
-            elif key == ord("s") or key == ord("S"):
-                ctrl.set_key("s")
+            elif key == ord("f") or key == ord("F"):
+                ctrl.set_key("f")
+            elif key == ord("b") or key == ord("B"):
+                ctrl.set_key("b")
             elif key == ord("d") or key == ord("D") or key == curses.KEY_UP:
                 ctrl.pwm_up()
             elif key == ord("a") or key == ord("A") or key == curses.KEY_DOWN:
                 ctrl.pwm_down()
-            elif key == ord("x") or key == ord("X"):
+            elif key == ord("s") or key == ord("S"):
                 ctrl.set_key(None)
                 ctrl.stop()
             elif key == ord("i") or key == ord("I"):
                 ctrl.send_command("identify")
             elif key == -1:
-                # No key pressed — if W/S was held, release it
+                # No key pressed — if F/B was held, release it
                 if ctrl.key_held is not None:
                     ctrl.set_key(None)
                     ctrl.stop()

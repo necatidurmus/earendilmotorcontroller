@@ -101,79 +101,12 @@ Bu roadmap'te her madde şu etiketlerle işaretlenir:
 
 ### Yapılacak Teknik İşler
 
-**Bug Düzeltmeleri:**
-- [x] [bugfix] Kuyruk darboğazı: `processQueuedCommands()` ve `processPythonQueuedCommands()` içindeki `if` → `while` (max CMD_QUEUE_LEN budget)
-- [x] [bugfix] `saveall` komutuna `saveModeToStorage()` ekle
-- [x] [bugfix] `IDENTIFY_TOGGLE_MS` değerini 50ms'ye çıkar + `IDENTIFY_STEP_INTERVAL_MS` eklendi
-- [x] [bugfix] Default PWM'yi EEPROM'dan ayarlanabilir yap (`defaultPwm` config alanı, hedef 150)
-
-**Mimari İyileştirmeler:**
-- [x] [architecture] Telemetri "PWM" field semantic karışıklığını çöz (PWM_SET / PWM_ACT + backward compat PWM)
-- [x] [architecture] `CommandItem` yapısına timestamp ekle (stale command detection)
-- [x] [architecture] Command queue'da latest-command-wins mantığı uygula
-
-**Validasyon:**
-- [ ] [validation] Dead-time test et — `applyDriveState()` shoot-through ölçümü
-- [ ] [validation] Rapid command input test — tüm komutlar işleniyor mu
-- [ ] [validation] Identify test — tutarlı hall map üretiyor mu
-
-**Etkilenen Modüller:**
-- `processQueuedCommands()` — main.cpp
-- `processPythonQueuedCommands()` — main.cpp
-- `sendTelemetry()` / `sendPythonTelemetry()` — main.cpp
-- `updateServiceIdentify()` — main.cpp
-- `applyDriveState()` — main.cpp (test)
-- `CommandItem` struct — main.cpp
-- `SavedConfig` struct — main.cpp
-
-**Riskler:**
-- Dead-time testi donanım hasarı riski taşıyabilir (MOSFET)
-- Identify step timing değişikliği motor fiziksel olarak test edilmeli
-
-**Başarı Kriterleri:**
-- Kuyrukta biriken komutlar tek loop iterasyonunda işleniyor
-- Identify tutarlı hall map üretiyor
-- Config EEPROM'dan yükleniyor
-- Telemetri field'ları mod bağımsız anlamlı
-
-**Bu faz tamamlanmadan sonraki faza geçilebilir mi:** Hayır — bug'lar düzeltilmeden protokol değişikliği riskli
-
----
-
-## Phase 2: UART Motion Protokolünün Sadeleştirilmesi
-
-**Amaç:** WASD protokolünü kaldırıp f/b/s motion protokolüne geçmek.
-
-**Neden gerekli:** Mevcut WASD semantiği hedef mimariyle uyumsuz. f/b/s protokolü motor-agnostik, lease-tabanlı, 4 motorlu yapıya uygun.
-
-### Mevcut Protokol (Kaldırılacak)
-
-```
-w = ileri (kalıcı)
-s = geri (kalıcı)
-x = dur
-d = PWM+10
-a = PWM-10
-```
-
-### Hedef Protokol (Uygulanacak)
-
-```
-f       = ileri varsayılan PWM
-f<duty> = ileri duty (0-255)
-b       = geri varsayılan PWM
-b<duty> = geri duty
-s       = dur (coast stop)
-k       = brake (Phase 4'te eklenecek)
-```
-
-**Yapılacak Teknik İşler:**
-- [ ] [protocol] `processCommand()`'da f/b/s komut parsing uygula
-- [ ] [protocol] `processPythonCommand()`'dan w/s/x/d/a kaldır, f/b/s ekle
-- [ ] [protocol] Lease-tabanlı motion: her f/b/s komutu `lastMotorCommandMs` yeniler
-- [ ] [protocol] Python modunda watchdog'u aktifleştir (`checkCommandWatchdog()`)
-- [ ] [protocol] Telemetri field'larını tutarlı hale getir
-- [ ] [protocol] WASD-specific kodu temizle
+- [x] [protocol] `processCommand()`'da f/b/s komut parsing uygula
+- [x] [protocol] `processPythonCommand()`'dan w/s/x/d/a kaldır, f/b/s ekle
+- [x] [protocol] Lease-tabanlı motion: her f/b/s komutu `lastMotorCommandMs` yeniler
+- [x] [protocol] Python modunda watchdog'u aktifleştir (`checkCommandWatchdog()`)
+- [x] [protocol] Telemetri field'larını tutarlı hale getir
+- [x] [protocol] WASD-specific kodu temizle
 
 **Etkilenen Modüller:**
 - `processCommand()` — main.cpp
@@ -629,7 +562,7 @@ Phase 8 (Tank Steering)
 |-----|-------|--------|
 | Phase 0 | Tamamlandı | Mevcut yapıları belgeleme |
 | Phase 1 | Tamamlandı | Queue, saveall, identify, default PWM, telemetry, timestamp, mailbox |
-| Phase 2 | Başlamadı | Protokol değişikliği |
+| Phase 2 | Tamamlandı | f/b/s protokolü uygulandı, WASD kaldırıldı |
 | Phase 3 | Tamamlandı | Lease/watchdog, Python watchdog aktif, lastMotorCommandMs tutarlılığı, host connection monitor |
 | Phase 4 | Başlamadı | Stop/brake ayrımı |
 | Phase 5 | Başlamadı | Brake test |
