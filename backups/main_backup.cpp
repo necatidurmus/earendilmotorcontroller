@@ -35,25 +35,21 @@ static constexpr uint8_t  PWM_RESOLUTION_BITS        = 8;
 // Not: analogWriteFrequency her STM32 core'da garanti değil.
 // BLDC_USE_ANALOGWRITE_FREQUENCY tanımlarsan deneyecek.
 // Hedef PWM frekansı — MOSFET anahtarlama hızı
-static constexpr uint32_t PWM_TARGET_FREQ_HZ         = 15000;
+static constexpr uint32_t PWM_TARGET_FREQ_HZ         = 8000;
 
-// Motor çalışırken izin verilen minimum hedef duty.
-// Not: Kalkış torkunu bununla değil, kickDuty ile veriyoruz.
-static constexpr uint8_t  STARTUP_MIN_DUTY           = 40;
-// Kalkışta hall geçişi gelmezse timeout — düşük hız/kalkış için biraz uzatıldı.
-static constexpr uint32_t START_NO_HALL_TIMEOUT_MS   = 700;
+// Motor ilk kalkışta minimum duty — altındaysa kalkış garantisi yok
+static constexpr uint8_t  STARTUP_MIN_DUTY           = 35;
+// Kalkışta hall sinyali gelmezse timeout — motor durur
+static constexpr uint32_t START_NO_HALL_TIMEOUT_MS   = 400;
 // Yön değiştirirken nötr bekleme süresi — akım sıfırlanması için
 static constexpr uint32_t DIRECTION_NEUTRAL_MS       = 80;
 
 // Hall sinyali stabil kabul için gereken örnek sayısı (debounce)
 static constexpr uint8_t  HALL_STABLE_SAMPLES        = 2;
-// Eski sürümde hall geçişi 6-8ms içinde gelmezse sürüş kesiliyordu.
-// Düşük hızda hall geçişi doğal olarak daha geç gelir; bu yüzden geçerli stabil hall
-// artık motorControlTick içinde sürekli geçerli kabul edilir. Bu sabit yalnızca geriye
-// dönük referans olarak bırakıldı.
+// Hall sinyali geçerli sayılma süresi — sonrasında stale kabul edilir
 static constexpr uint32_t HALL_VALID_STALE_US        = 6000;
-// Hall ham değeri geçersiz olursa son geçerli state kısa süre tutulur.
-static constexpr uint32_t INVALID_HALL_HOLD_US       = 15000;
+// Hall geçersiz kaldığında son durumu tutma süresi
+static constexpr uint32_t INVALID_HALL_HOLD_US       = 8000;
 // Hall geçersiz kalma süresi — sonrasında motor durdurulur
 static constexpr uint32_t INVALID_HALL_STOP_US       = 25000;
 
@@ -78,7 +74,7 @@ static constexpr uint32_t IWDG_TIMEOUT_US             = 500000;
 // === Servis Modu Ayarları ===
 
 // Identify modunda her step için toggle sayısı — hall tespiti için
-static constexpr uint16_t IDENTIFY_STEP_TOGGLES      = 100;
+static constexpr uint16_t IDENTIFY_STEP_TOGGLES      = 220;
 // Identify modunda uygulanan duty değeri
 static constexpr uint8_t  IDENTIFY_DUTY              = 35;
 static constexpr uint16_t IDENTIFY_TOGGLE_MS         = 5;
@@ -149,7 +145,7 @@ static constexpr int      EEPROM_ADDR_MAP = 0;
 
 // Config EEPROM adresi ve doğrulama sabitleri
 static constexpr uint32_t CFG_MAGIC       = 0x43464731UL; // "CFG1"
-static constexpr uint8_t  CFG_VERSION     = 3;  // v3: tuned kick/ramp defaults
+static constexpr uint8_t  CFG_VERSION     = 1;
 static constexpr int      EEPROM_ADDR_CFG = 64;
 
 // Çalışma modu (Normal/Control/Settings) EEPROM adresi
@@ -319,10 +315,10 @@ struct CommandRequest {
 bool kickEnabled = true;
 bool rampEnabled = true;
 
-uint8_t  kickDuty       = 225;  // düşük PWM komutunda bile güçlü ilk kalkış darbesi
-uint16_t kickMs         = 50;   // hub motor kalkışı için yeterli süre
-uint8_t  rampStep       = 32;   // kick sonrası yumuşak düşüş
-uint16_t rampIntervalMs = 2;    // ramp aralığı
+uint8_t  kickDuty       = 70;
+uint16_t kickMs         = 120;
+uint8_t  rampStep       = 4;
+uint16_t rampIntervalMs = 10;
 
 // Debug ve hata bayrakları
 bool verboseDebug = false;
@@ -333,7 +329,7 @@ OperatingMode activeMode = OperatingMode::Normal;
 CommandSource serviceReplySrc = CommandSource::USB;
 
 // Control modu runtime
-uint8_t  controlPwmValue = 150;  // varsayılan sürüş PWM
+uint8_t  controlPwmValue = 150;  // [bugfix] Varsayılan PWM, config'den yüklenir
 int8_t   controlDirection = 0;   // 0=durdu, 1=ileri, -1=geri
 
 // Runtime nesneleri — hall, motor, servis
@@ -767,10 +763,10 @@ void clampConfig() {
 void loadDefaultConfig() {
   kickEnabled = true;
   rampEnabled = true;
-  kickDuty = 225;
-  kickMs = 50;
-  rampStep = 32;
-  rampIntervalMs = 2;
+  kickDuty = 70;
+  kickMs = 120;
+  rampStep = 4;
+  rampIntervalMs = 10;
   controlPwmValue = 150;
   clampConfig();
 }
@@ -907,7 +903,6 @@ void printHelp(CommandSource src) {
   replyLn(src, F(" kickms <n>"));
   replyLn(src, F(" ramprate <n>"));
   replyLn(src, F(" rampms <n>"));
-  replyLn(src, F(" defpwm <n>"));
   replyLn(src, F(" savecfg / loadcfg / defaults"));
   replyLn(src, F(" saveall"));
   replyLn(src, F(" hall"));
@@ -948,12 +943,6 @@ void printStatus(CommandSource src) {
   else replyLn(src, F("STOP"));
   replyFC(src, F("TargetDuty: ")); replyLn(src, motorRt.targetDuty);
   replyFC(src, F("CurrentDuty: ")); replyLn(src, motorRt.currentDuty);
-  replyFC(src, F("Kick: ")); reply(src, kickEnabled ? F("ON") : F("OFF"));
-  replyFC(src, F(" Duty=")); reply(src, kickDuty);
-  replyFC(src, F(" Ms=")); replyLn(src, kickMs);
-  replyFC(src, F("Ramp: ")); reply(src, rampEnabled ? F("ON") : F("OFF"));
-  replyFC(src, F(" Step=")); reply(src, rampStep);
-  replyFC(src, F(" IntervalMs=")); replyLn(src, rampIntervalMs);
 
   replyFC(src, F("Hall stableRaw: ")); replyLn(src, hallRt.stableRaw);
   replyFC(src, F("Hall validState: ")); replyLn(src, hallRt.lastValidState);
@@ -2080,23 +2069,18 @@ void motorControlTick(uint32_t nowUs) {
   bool haveState = false;
   uint8_t electricalState = 255;
 
-  // Düşük hız fix'i:
-  // Eski mantık son hall GEÇİŞ zamanına bakıp 6-8ms sonra fazları kapatıyordu.
-  // Düşük devirde hall geçiş aralığı bundan uzun olduğu için motor, özellikle
-  // kalkışta ve yavaş sürüşte torkunu kaybediyordu. Stabil hall değeri geçerliyse
-  // aynı electrical state'i sürmeye devam etmek doğru davranıştır.
-  const uint8_t stableState = hallToState(hallRt.stableRaw);
+  bool hasFreshValidHall =
+      isValidMappedState(hallRt.lastValidState) &&
+      ((uint32_t)(nowUs - hallRt.lastValidUs) <= HALL_VALID_STALE_US);
 
-  if (isValidMappedState(stableState)) {
-    electricalState = stableState;
+  if (hasFreshValidHall) {
+    electricalState = hallRt.lastValidState;
     haveState = true;
     motorRt.lastDrivenElectricalState = electricalState;
   } else {
-    // Sadece 000/111 gibi geçersiz hall glitch'lerinde kısa süre son state'i tut.
     bool canHoldLastState =
         isValidMappedState(motorRt.lastDrivenElectricalState) &&
-        hallRt.invalidSinceUs != 0 &&
-        ((uint32_t)(nowUs - hallRt.invalidSinceUs) <= INVALID_HALL_HOLD_US);
+        ((uint32_t)(nowUs - hallRt.lastValidUs) <= INVALID_HALL_HOLD_US);
 
     if (canHoldLastState) {
       electricalState = motorRt.lastDrivenElectricalState;
@@ -2288,9 +2272,7 @@ void setup() {
 
 #if defined(BLDC_USE_ANALOGWRITE_FREQUENCY)
   analogWriteFrequency(PWM_TARGET_FREQ_HZ);
-  sysPrint(F("[OK] PWM freq set to "));
-  sysPrintV(PWM_TARGET_FREQ_HZ);
-  sysLn(F(" Hz"));
+  sysLn(F("[OK] analogWriteFrequency applied"));
 #else
   sysLn(F("[INFO] PWM freq left at core default"));
 #endif

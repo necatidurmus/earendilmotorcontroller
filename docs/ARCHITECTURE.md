@@ -189,9 +189,41 @@ void loop() {
 
 ---
 
-## 4. UART Hot Path Separation
+## 4. UART Protocol
 
-### 4.1 How UART Is Kept Outside the Hot Path
+### 4.1 Motion Commands (f/b/s Protocol)
+
+The module accepts single-character motion commands with optional duty parameter:
+
+| Command | Action | Example |
+|---------|--------|---------|
+| `f` | Forward at default PWM | `f` |
+| `f<duty>` | Forward at specified duty (0-255) | `f150` |
+| `b` | Backward at default PWM | `b` |
+| `b<duty>` | Backward at specified duty | `b200` |
+| `s` | Stop (coast) — all outputs off | `s` |
+| `x` | Brake (active) — low-side short | `x` |
+
+**Command parsing:** Commands are terminated by newline (`\n`). Single-character commands use default PWM; numeric suffix sets specific duty.
+
+### 4.2 Lease / Watchdog Semantics
+
+Each motion command (`f`, `b`, `x`) refreshes a timestamp (`lastMotorCommandMs`). If no motion command is received within `CMD_WATCHDOG_MS` (800ms), the motor is automatically stopped (coast).
+
+```
+Host:  f150 ──────┬───────┬───────┬───────┬──►
+                  │       │       │       │
+Motor:  Running   │   Running   │  Stopped │
+              800ms     800ms   timeout
+```
+
+**Behavior:**
+- Forward (`f`) and backward (`b`) commands refresh the lease
+- Brake (`x`) refreshes the lease (brake is a controlled stop)
+- Stop (`s`) does NOT refresh the lease (immediate coast, no safety timeout needed)
+- 800ms without any motion command → automatic coast stop
+
+### 4.3 UART Hot Path Separation
 
 UART processing never directly drives MOSFETs. The data flow is:
 
@@ -205,7 +237,7 @@ UART RX → Ring Buffer → Line Parser → Command Queue → Command Processor 
 3. **pendingReq** struct holds intent, not action
 4. **Control tick** applies changes atomically
 
-### 4.2 Intent vs Action
+### 4.4 Intent vs Action
 
 | Stage | What Happens | Where |
 |-------|--------------|-------|
@@ -216,15 +248,27 @@ UART RX → Ring Buffer → Line Parser → Command Queue → Command Processor 
 
 The command processor never calls `analogWrite()` or `digitalWrite()` directly. It only sets flags in `pendingReq`. The control tick reads these flags and applies changes.
 
-### 4.3 Why This Matters for Multi-Motor
+### 4.5 Telemetry Format
 
-In a 4-motor system:
-- Hub STM32 sends commands to 4 motors simultaneously
-- Each motor driver's UART receiver is independent
-- Each motor driver's control tick is independent
-- No cross-motor timing dependencies
+Telemetry is sent every 100ms (configurable) when telemetry is enabled:
 
-If UART processing directly drove MOSFETs, command timing would directly affect commutation timing — unacceptable for multi-motor coordination.
+```
+RPM:<val>,D:<duty>,DIR:<F/R>,PH:<phase>,PWM_SET:<val>,PWM_ACT:<val>,BRAKE:<0/1>,FC:<code>,H:<hall>
+```
+
+| Field | Description |
+|-------|-------------|
+| RPM | Calculated revolutions per minute |
+| D | Instantaneous duty cycle (0-255) |
+| DIR | Direction: F=forward, R=reverse, S=stopped |
+| PH | Motor phase: 0=Stopped, 1=Kick, 2=Running, 3=NeutralWait, 4=Fault, 5=Braking |
+| PWM_SET | PWM value set by host (0-255) |
+| PWM_ACT | PWM value used by firmware (after ramp/clamp) |
+| BRAKE | Brake active flag: 0=off, 1=braking |
+| FC | Fault code (0=no fault) |
+| H | Raw Hall sensor value (1-6) |
+
+**Example:** `RPM:2450,D:180,DIR:F,PH:2,PWM_SET:200,PWM_ACT:180,BRAKE:0,FC:0,H:3`
 
 ---
 
@@ -412,7 +456,7 @@ This ensures:
 
 | Structure | Status | What's Needed |
 |-----------|--------|---------------|
-| f/b/s protocol | ❌ Missing | Replace WASD with f/b/s |
+| f/b/s protocol | ✅ Implemented | f/b/s with duty suffix, x=brake |
 | Lease semantics | ❌ Missing | Timestamp-based motion validation |
 | Brake state | ❌ Missing | `MotorPhase::Braking` + `brakeAllLowSide()` |
 | Hardware watchdog | ❌ Missing | IWDG initialization and feeding |
@@ -562,7 +606,7 @@ Any → (watchdog/fault) → Stopped (coast, NOT brake)
 | Running | Normal commutation with ramp | Until stop/brake/fault |
 | NeutralWait | All off, waiting for current decay | `DIRECTION_NEUTRAL_MS` (80ms) |
 | Fault | Error state, outputs off | Until manual reset |
-| **Braking** | **Active braking (low-side short)** | **`brakeHoldMs` (default 500ms)** |
+| Braking | Active braking (low-side short) | `brakeHoldMs` (default 500ms) |
 
 ---
 

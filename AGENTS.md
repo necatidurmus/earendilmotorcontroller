@@ -67,7 +67,7 @@ Any → (stop/watchdog) → Stopped
 Any → (hall fault) → Fault
 ```
 
-Fazlar: Stopped(0), Kick(1), Running(2), NeutralWait(3), Fault(4)
+Fazlar: Stopped(0), Kick(1), Running(2), NeutralWait(3), Fault(4), Braking(5)
 
 ---
 
@@ -96,10 +96,20 @@ Lease: Her hareket komutu zaman damgasını yeniler. 800ms komut gelmezse motor 
 ### Telemetri Formatı
 
 ```
-RPM:0,D:0,DIR:F,PH:2,PWM_SET:150,PWM_ACT:0,PDIR:1,H:3
+RPM:0,D:0,DIR:F,PH:2,PWM_SET:150,PWM_ACT:0,BRAKE:0,FC:0,H:3
 ```
 
-RPM=devir, D=mevcut duty, DIR=F/R, PH=faz(0-4), PWM_SET=hedef duty, PWM_ACT=firmware duty, PDIR=yön(1/-1/0), H=ham Hall
+| Field | Açıklama |
+|-------|----------|
+| RPM | Hesaplanan devir |
+| D | Anlık duty cycle |
+| DIR | Yön (F/R) |
+| PH | Faz (0-5): Stopped, Kick, Running, NeutralWait, Fault, Braking |
+| PWM_SET | Host tarafından ayarlanan PWM hedefi |
+| PWM_ACT | Firmware'ın uyguladığı gerçek PWM |
+| BRAKE | Brake aktif mi (0/1) |
+| FC | Fault kodu (0=None) |
+| H | Ham Hall değeri (0-7) |
 
 ---
 
@@ -120,7 +130,7 @@ Git tag'leri her faz bitiminde:
 - v0.4.0 — Phase 1+3 (stabilize, watchdog/failsafe)
 - v0.5.0 — Phase 2 (f/b/s protokolü)
 
-Faz sırası: Stabilize → f/b/s → Lease → Brake → Cleanup → Multi-Motor → Tank Steering
+Faz sırası: Stabilize → f/b/s → Lease → Brake → ~~Test~~ → Cleanup (Faz 6 aktif) → Multi-Motor → Tank Steering
 
 ---
 

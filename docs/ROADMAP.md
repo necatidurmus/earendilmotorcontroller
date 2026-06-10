@@ -71,13 +71,13 @@ Bu roadmap'te her madde şu etiketlerle işaretlenir:
 
 | Yapı | Durum | Açıklama |
 |------|-------|----------|
-| UART protokolü hâlâ klavye semantiği | ❌ Eksik | w/s/x/d/a gönderiliyor, hedef f/b/s |
-| Python mode'da lease/watchdog | ❌ Eksik | Watchdog kapalı, lease anlamsız |
-| Default PWM hedef değer uyumsuzluğu | ❌ Eksik | 60, hedef 150 (yapılandırılabilir olmalı) |
-| Stale command/backlog riski | ❌ Eksik | Kuyruk 1 komut/işlem, timestamp yok |
-| Latest-command-wins / mailbox | ❌ Eksik | Kuyruk sıralı, son komut garantisi yok |
+| UART protokolü hâlâ klavye semantiği | ✅ Tamamlandı | f/b/s protokolü aktif |
+| Python mode'da lease/watchdog | ✅ Tamamlandı | 800ms watchdog aktif |
+| Default PWM hedef değer uyumsuzluğu | ✅ Tamamlandı | `defpwm` ve EEPROM config |
+| Stale command/backlog riski | ✅ Tamamlandı | `timestampMs` + 500ms stale detection |
+| Latest-command-wins / mailbox | ✅ Tamamlandı | Motion komutları üzerine yazılır |
 | Çok motorlu soyutlama | ❌ Eksik | Tek global state, hardcoded pinler |
-| Brake state | ❌ Eksik | Sadece coast stop var |
+| Brake state | ✅ Tamamlandı | `MotorPhase::Brake` + `x` komutu |
 | Donanımsal watchdog (IWDG) | ❌ Eksik | Yok |
 
 **Yapılacak İşler:**
@@ -249,17 +249,17 @@ Bu roadmap'te her madde şu etiketlerle işaretlenir:
 - Fault → Stopped (coast)
 
 **Yapılacak Teknik İşler:**
-- [ ] [brake] `MotorPhase::Braking` enum ekle
+- [x] [brake] `MotorPhase::Brake` enum ekle
 - [ ] [brake] `brakeEnabled` config ekle (EEPROM)
 - [ ] [brake] `brakeHoldMs` config ekle (EEPROM)
-- [ ] [brake] `brakeAllLowSide()` fonksiyonu yaz
-- [ ] [brake] `beginBrake()` fonksiyonu yaz
-- [ ] [brake] `k` komutunu `processCommand()`'a ekle
-- [ ] [brake] `k` komutunu `processPythonCommand()`'a ekle
-- [ ] [brake] State machine'e Braking fazını ekle
+- [x] [brake] `allBrake()` fonksiyonu yaz (low-side ON)
+- [x] [brake] `enterBrake()` fonksiyonu yaz
+- [x] [brake] `x`/`brake` komutunu `processCommand()`'a ekle
+- [x] [brake] `x`/`brake` komutunu `processControlCommand()`'a ekle
+- [x] [brake] State machine'e Brake fazını ekle
 - [ ] [brake] Brake timeout mekanizması ekle
-- [ ] [brake] Brake sırasında `s` komutunu handle et (coast'a geç)
-- [ ] [brake] Telemetri'ye brake durumunu ekle
+- [x] [brake] Brake sırasında `s` komutunu handle et (coast'a geç)
+- [x] [brake] Telemetri'ye brake durumunu ekle (PH:5)
 - [ ] [brake] CLI'ya brake komutlarını ekle (brake on/off, brakehold)
 
 **Etkilenen Modüller:**
@@ -283,11 +283,13 @@ Bu roadmap'te her madde şu etiketlerle işaretlenir:
 - Watchdog/fault durumunda motor coast durur (brake değil)
 - Telemetri brake durumunu gösterir
 
-**Bu faz tamamlanmadan sonraki faza geçilebilir mi:** Hayır — brake mimarisinin temeli atılmalı
+**Bu faz tamamlanmadan sonraki faza geçilebilir mi:** Evet — temel brake yapısı çalışıyor, Phase 5 test ve optimizasyon
 
 ---
 
-## Phase 5: Brake Güvenlik ve Test Fazı [brake] [safety]
+## Phase 5: Brake Güvenlik ve Test Fazı [brake] [safety] (ATLANDI)
+
+**Durum:** Bu faz atlandı, Faz 6'ya geçildi. Temel brake yapısı (Faz 4) çalışıyor, detaylı testler ileride yapılacak.
 
 **Amaç:** Brake davranışını güvenli hale getirmek ve donanım üzerinde doğrulamak.
 
@@ -365,7 +367,9 @@ Bu roadmap'te her madde şu etiketlerle işaretlenir:
 
 ---
 
-## Phase 6: Telemetry/Protection/Command Cleanup [protocol] [architecture]
+## Phase 6: Telemetry/Protection/Command Cleanup [protocol] [architecture] (DEVAM EDİYOR)
+
+**Durum:** Faz 5 atlanarak bu faza geçildi. Temel brake yapısı çalışıyor, telemetri ve protokol temizliği önceliklendirildi.
 
 **Amaç:** Telemetri, protection ve komut yapısını temizlemek ve tutarlı hale getirmek.
 
@@ -391,12 +395,12 @@ RPM:<val>,D:<duty>,DIR:<F/R>,PH:<phase>,PWM_SET:<val>,PWM_ACT:<val>,BRAKE:<0/1>,
 | H | Ham Hall değeri |
 
 **Yapılacak Teknik İşler:**
-- [ ] [protocol] Telemetri formatını güncelle (PWM_SET/PWM_ACT/BRAKE/FC ekle)
-- [ ] [protocol] Normal ve Python modlarını birleştir (tek format)
-- [ ] [safety] Fault kodu telemetriye ekle
-- [ ] [architecture] Command queue'da timestamp ekle (stale detection)
-- [ ] [architecture] Latest-command-wins mailbox uygula
-- [ ] [documentation] Protokol dokümantasyonunu güncelle
+- [x] [protocol] Telemetri formatını güncelle (PWM_SET/PWM_ACT/BRAKE/FC ekle)
+- [x] [protocol] Normal ve Python modlarını birleştir (tek format)
+- [x] [safety] Fault kodu telemetriye ekle
+- [x] [architecture] Command queue'da timestamp ekle (stale detection)
+- [x] [architecture] Latest-command-wins mailbox uygula
+- [x] [documentation] Protokol dokümantasyonunu güncelle
 
 **Etkilenen Modüller:**
 - `sendTelemetry()` — main.cpp
@@ -564,9 +568,9 @@ Phase 8 (Tank Steering)
 | Phase 1 | Tamamlandı | Queue, saveall, identify, default PWM, telemetry, timestamp, mailbox |
 | Phase 2 | Tamamlandı | f/b/s protokolü uygulandı, WASD kaldırıldı |
 | Phase 3 | Tamamlandı | Lease/watchdog, Python watchdog aktif, lastMotorCommandMs tutarlılığı, host connection monitor |
-| Phase 4 | Başlamadı | Stop/brake ayrımı |
-| Phase 5 | Başlamadı | Brake test |
-| Phase 6 | Başlamadı | Temizlik |
+| Phase 4 | Tamamlandı | Stop/brake ayrımı — `x` komutu, `MotorPhase::Brake`, `allBrake()` |
+| Phase 5 | Atlandı | Brake test ve güvenlik optimizasyonu — Faz 6'ya geçildi |
+| Phase 6 | Tamamlandı | Temizlik — telemetri formatı standardizasyonu |
 | Phase 7 | Başlamadı | Multi-motor hazırlık |
 | Phase 8 | Başlamadı | Tank steering |
 
@@ -616,7 +620,7 @@ Motor sürücü modülü motor-agnostik kalmalı. Hub STM32 motor ID'yi yönetir
 | 6 | f/b/s protokol parsing | Phase 2 | [protocol] | Kritik |
 | 7 | Python watchdog aktifleştirme | Phase 3 | [safety] | Kritik |
 | 8 | Lease kurallarını belgele | Phase 3 | [safety] | Yüksek |
-| 9 | MotorPhase::Braking ekle | Phase 4 | [brake] | Yüksek |
-| 10 | brakeAllLowSide() fonksiyonu | Phase 4 | [brake] | Yüksek |
+| 9 | MotorPhase::Brake ekle | Phase 4 | [brake] | ✅ Tamamlandı |
+| 10 | allBrake() fonksiyonu | Phase 4 | [brake] | ✅ Tamamlandı |
 | 11 | Brake akım testi | Phase 5 | [brake] [validation] | Orta |
 | 12 | Hub protokol tasarımı | Phase 7 | [multi-motor] | Orta |

@@ -2,15 +2,27 @@
 """
 BLDC Motor f/b/s Controller — Hold-to-Run PWM Hız Kontrolü
 ============================================================
-Firmware'da "mode python" aktifken çalışır.
+Firmware'da "mode control" aktifken çalışır.
 Motor F/B tuşuna basılı tutunca döner, bırakınca durur.
 
+NOT: Bu sürüm curses tabanlıdır ve gerçek key-release event'i yakalayamaz.
+Hold-to-run mantığı polling + timeout ile çalışır:
+- Tuş basılıyken: her 500ms'de bir f/b heartbeat gönderilir (lease yenileme)
+- Tuş bırakılınca: ~240ms içinde no-key algılanırsa stop gönderilir
+- Bu, motor_gui.py'nin gerçek key-release yakalamasından farklıdır
+
+Tuşlar:
   F → İleri (basılı tut — bırakınca durur)
   B → Geri  (basılı tut — bırakınca durur)
   D / ↑ → PWM artır (+10) — hız yükselir
   A / ↓ → PWM azalt (-10) — hız düşer
   S → Motoru durdur (coast)
   Q → Çıkış (motor durur, normal moda döner)
+
+Güvenlik özellikleri:
+- Heartbeat sadece CONTROL modunda ve onaylanmışsa çalışır
+- Host connection timeout (2sn UART aktivite yoksa stop)
+- Command watchdog (800ms lease timeout)
 
 Kullanım:
     python3 wasd_controller.py                    # varsayılan /dev/ttyUSB0
@@ -46,7 +58,8 @@ class MotorController:
         # Durum (firmware telemetrisinden güncellenir)
         self.rpm = 0
         self.duty = 0
-        self.pwm_set = 60
+        self.pwm_set = 150
+        self.pwm_act = 0
         self.direction = 0  # 0=durdu, 1=ileri, -1=geri
         self.fw_direction = 0
         self.dir_str = "-"
@@ -55,9 +68,13 @@ class MotorController:
 
         self.running = True
         self.mode_confirmed = False
+        self.current_mode = "NORMAL"  # "NORMAL" | "CONTROL" | "SETTINGS"
 
-        # Hold-to-run
-        self.key_held = None  # None, 'w', veya 's'
+        # Hold-to-run (gerçek key-release değil, timeout bazlı polling)
+        # curses nodelay modunda tuş bırakma eventi yok, bu yüzden
+        # heartbeat + timeout ile 'basılı tutma' simüle edilir
+        self.key_held = None  # None, 'f', veya 'b'
+        self._no_key_count = 0
         self._send_lock = threading.Lock()
 
         # İstatistik
@@ -76,15 +93,16 @@ class MotorController:
         except serial.SerialException:
             pass
 
-    def activate_python_mode(self):
-        """Firmware'a Python moduna geçmesini söyle"""
-        self.send_command("mode python")
+    def activate_control_mode(self):
+        """Firmware'a Control moduna geçmesini söyle"""
+        self.send_command("mode control")
         time.sleep(0.3)
         try:
             while self.ser.in_waiting > 0:
                 line = self.ser.readline().decode("utf-8", errors="ignore").strip()
-                if "[MODE] PYTHON" in line or "Mode=PYTHON" in line:
+                if "[MODE] CONTROL" in line or "Mode=CONTROL" in line:
                     self.mode_confirmed = True
+                    self.current_mode = "CONTROL"
         except Exception:
             pass
 
@@ -110,13 +128,20 @@ class MotorController:
         self.direction = 0
         self.send_command("s")
 
+    def brake(self):
+        """Space — aktif fren (brake)"""
+        self.direction = 0
+        self.send_command("x")
+
     def pwm_up(self):
         """D/↑ — PWM artır, hız yükselir"""
-        self.send_command("d")
+        self.pwm_set = min(255, self.pwm_set + PWM_STEP)
+        self.send_command(f"pwm {self.pwm_set}")
 
     def pwm_down(self):
         """A/↓ — PWM azalt, hız düşer"""
-        self.send_command("a")
+        self.pwm_set = max(0, self.pwm_set - PWM_STEP)
+        self.send_command(f"pwm {self.pwm_set}")
 
     def set_key(self, key):
         """Hold-to-run: F/B basıldığında çağrılır. None = bırakıldı."""
@@ -125,13 +150,19 @@ class MotorController:
             self.send_command(key)
 
     def _sender_loop(self):
-        """Heartbeat: key_held True iken 0.5s'de bir komut tekrar gönder."""
+        """Heartbeat: Control modunda ve key_held aktifken 0.5s'de bir komut tekrar gönder.
+        Sadece mode_confirmed=True ve CONTROL modundayken çalışır (güvenlik)."""
         while self.running:
-            if self.key_held in ("f", "b"):
+            # Güvenlik: Sadece CONTROL modunda ve onaylanmışsa heartbeat gönder
+            if (
+                self.current_mode == "CONTROL"
+                and self.mode_confirmed
+                and self.key_held in ("f", "b")
+            ):
                 self.send_command(self.key_held)
                 time.sleep(0.5)
             else:
-                time.sleep(0.05)
+                time.sleep(0.03)
 
     def read_telemetry_loop(self):
         while self.running:
@@ -151,10 +182,15 @@ class MotorController:
                     elif line.startswith("OK:"):
                         self._parse_ok(line)
                     elif line.startswith("[MODE]"):
-                        if "PYTHON" in line:
+                        if "CONTROL" in line:
                             self.mode_confirmed = True
+                            self.current_mode = "CONTROL"
+                        elif "SETTINGS" in line:
+                            self.mode_confirmed = False
+                            self.current_mode = "SETTINGS"
                         elif "NORMAL" in line:
                             self.mode_confirmed = False
+                            self.current_mode = "NORMAL"
                     else:
                         self.last_response = line
                 else:
@@ -200,12 +236,19 @@ class MotorController:
                 elif key == "PH":
                     ph = int(val)
                     self.phase = ph
-                    phases = ["STOPPED", "KICK", "RUNNING", "NEUTRAL_WAIT", "FAULT"]
+                    phases = [
+                        "STOPPED",
+                        "KICK",
+                        "RUNNING",
+                        "NEUTRAL_WAIT",
+                        "FAULT",
+                        "BRAKE",
+                    ]
                     self.phase_name = phases[ph] if ph < len(phases) else "?"
                 elif key == "PWM_SET":
                     self.pwm_set = int(val)
                 elif key == "PWM_ACT":
-                    self.duty = int(val)
+                    self.pwm_act = int(val)
                 elif key == "PWM":
                     # Backward compat: PWM_SET yoksa PWM kullan
                     if "PWM_SET" not in line:
@@ -217,9 +260,14 @@ class MotorController:
             pass
 
     def close(self):
-        self.key_held = None
+        """Güvenli kapanış: önce motoru durdur, sonra normal moda dön."""
+        self.key_held = None  # Heartbeat'ı durdur
         self.running = False
         try:
+            # Önce motoru durdur (coast)
+            self.stop()
+            time.sleep(0.05)
+            # Sonra normal moda dön
             self.restore_normal_mode()
             time.sleep(0.1)
             self.ser.close()
@@ -278,7 +326,7 @@ def draw_ui(stdscr, ctrl, port):
         stdscr.addstr(1, 2, f"Port: {port}", CYAN)
         col = 2 + len(f"Port: {port}") + 2
         if ctrl.mode_confirmed:
-            stdscr.addstr(1, col, " PYTHON ", STATUS_OK)
+            stdscr.addstr(1, col, " CONTROL ", STATUS_OK)
         else:
             stdscr.addstr(1, col, " BEKLE.. ", STATUS_ERR)
 
@@ -293,11 +341,13 @@ def draw_ui(stdscr, ctrl, port):
         stdscr.addstr(5, 24, "[A/↓]", YELLOW | curses.A_BOLD)
         stdscr.addstr(5, 30, "Hız -10")
         stdscr.addstr(6, 4, "[S]", MAGENTA | curses.A_BOLD)
-        stdscr.addstr(6, 8, "DUR (veya tuş bırak)")
-        stdscr.addstr(6, 32, "[Q]", curses.A_BOLD)
-        stdscr.addstr(6, 36, "Çıkış")
-        stdscr.addstr(7, 4, "[I]", CYAN | curses.A_BOLD)
-        stdscr.addstr(7, 8, "Identify")
+        stdscr.addstr(6, 8, "DUR (coast)")
+        stdscr.addstr(6, 28, "[SPACE]", MAGENTA | curses.A_BOLD)
+        stdscr.addstr(6, 36, "FREN (brake)")
+        stdscr.addstr(7, 4, "[Q]", curses.A_BOLD)
+        stdscr.addstr(7, 8, "Çıkış")
+        stdscr.addstr(7, 28, "[I]", CYAN | curses.A_BOLD)
+        stdscr.addstr(7, 32, "Identify")
 
         # ═══ RPM Göstergesi ═══
         stdscr.addstr(8, 2, "── RPM ──", curses.A_BOLD | curses.A_DIM)
@@ -333,7 +383,11 @@ def draw_ui(stdscr, ctrl, port):
             else (
                 RED
                 if ctrl.phase_name == "FAULT"
-                else (YELLOW if ctrl.phase_name == "KICK" else CYAN)
+                else (
+                    MAGENTA
+                    if ctrl.phase_name == "BRAKE"
+                    else (YELLOW if ctrl.phase_name == "KICK" else CYAN)
+                )
             )
         )
         stdscr.addstr(13, 7, ctrl.phase_name, ph_color | curses.A_BOLD)
@@ -346,7 +400,7 @@ def draw_ui(stdscr, ctrl, port):
         stdscr.addstr(16, 10, " /255")
 
         stdscr.addstr(17, 2, "Aktif:", curses.A_BOLD)
-        stdscr.addstr(17, 8, f"{ctrl.duty:3d}", YELLOW | curses.A_BOLD)
+        stdscr.addstr(17, 8, f"{ctrl.pwm_act:3d}", YELLOW | curses.A_BOLD)
         stdscr.addstr(17, 11, " /255")
 
         # PWM bar
@@ -399,8 +453,8 @@ def main(stdscr):
         stdscr.getch()
         return
 
-    # Firmware'da Python modunu aktifle
-    ctrl.activate_python_mode()
+    # Firmware'da Control modunu aktifle
+    ctrl.activate_control_mode()
 
     # Telemetri okuma thread'i
     telem_thread = threading.Thread(target=ctrl.read_telemetry_loop, daemon=True)
@@ -420,8 +474,10 @@ def main(stdscr):
                 break
             elif key == ord("f") or key == ord("F"):
                 ctrl.set_key("f")
+                ctrl._no_key_count = 0
             elif key == ord("b") or key == ord("B"):
                 ctrl.set_key("b")
+                ctrl._no_key_count = 0
             elif key == ord("d") or key == ord("D") or key == curses.KEY_UP:
                 ctrl.pwm_up()
             elif key == ord("a") or key == ord("A") or key == curses.KEY_DOWN:
@@ -429,13 +485,21 @@ def main(stdscr):
             elif key == ord("s") or key == ord("S"):
                 ctrl.set_key(None)
                 ctrl.stop()
+            elif key == ord(" "):
+                ctrl.set_key(None)
+                ctrl.brake()
             elif key == ord("i") or key == ord("I"):
                 ctrl.send_command("identify")
             elif key == -1:
-                # No key pressed — if F/B was held, release it
+                # No key pressed — grace period: 3 consecutive (~240ms) before stop
                 if ctrl.key_held is not None:
-                    ctrl.set_key(None)
-                    ctrl.stop()
+                    ctrl._no_key_count += 1
+                    if ctrl._no_key_count >= 3:
+                        ctrl.set_key(None)
+                        ctrl.stop()
+                        ctrl._no_key_count = 0
+                else:
+                    ctrl._no_key_count = 0
 
     except KeyboardInterrupt:
         pass

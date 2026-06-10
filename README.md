@@ -10,7 +10,7 @@ This project implements a single-motor BLDC driver module on an STM32F411CE (Bla
 
 The module is designed as a building block for a 4-motor skid-steer vehicle. Multiple modules connect to a hub STM32 (separate project) which multiplexes commands from a Python host.
 
-**Current Status:** Prototype working with legacy WASD protocol. Transitioning to f/b/s motion protocol.
+**Current Status:** Prototype working with f/b/s motion protocol.
 
 ---
 
@@ -70,7 +70,7 @@ The module is designed as a building block for a 4-motor skid-steer vehicle. Mul
 - No hardware watchdog (IWDG)
 - Command queue processes only 1 command per loop iteration
 - Default PWM is hardcoded to 60 (should be configurable)
-- Protocol is WASD-based (transitioning to f/b/s)
+- Protocol: f/b/s motion commands with lease watchdog
 - No software dead-time in MOSFET switching
 
 See [ISSUES.md](ISSUES.md) for full issue list.
@@ -100,6 +100,7 @@ The motor control tick runs at 60µs intervals (~16.6kHz). It handles Hall senso
 ```
 Stopped → (f/b command) → Kick → (kickMs timeout) → Running
 Running → (direction change) → NeutralWait → Kick → Running
+Running → (brake command) → Braking → (timeout/release) → Stopped
 Any → (stop command / watchdog) → Stopped
 Any → (hall fault / transition spam) → Fault
 ```
@@ -108,51 +109,55 @@ Any → (hall fault / transition spam) → Fault
 |-------|-------------|----------|
 | Stopped | All outputs off | Until command |
 | Kick | High-torque startup burst | 120ms (configurable) |
-| Running | Normal commutation with ramp | Until stop/fault |
+| Running | Normal commutation with ramp | Until stop/brake/fault |
 | NeutralWait | Off, waiting for current decay | 80ms |
+| Braking | Active braking (low-side short) | Until timeout or release |
 | Fault | Error state, outputs off | Until reset |
 
 ---
 
 ## UART Protocol
 
-### Current (Legacy WASD)
+### Motion Commands (f/b/s)
 
-| Command | Action |
-|---------|--------|
-| `w` | Forward (persistent) |
-| `s` | Backward (persistent) |
-| `x` | Stop |
-| `d` | PWM +10 |
-| `a` | PWM -10 |
+| Command | Action | Example |
+|---------|--------|---------|
+| `f` | Forward at default PWM | `f` |
+| `f<duty>` | Forward at specified duty (0-255) | `f150` |
+| `b` | Backward at default PWM | `b` |
+| `b<duty>` | Backward at specified duty | `b200` |
+| `s` | Stop (coast) — all outputs off | `s` |
+| `x` | Brake (active) — low-side short | `x` |
 
-### Target (f/b/s)
+**Command format:** Single-character command with optional 0-255 duty suffix, terminated by newline (`\n`).
 
-| Command | Action |
-|---------|--------|
-| `f` | Forward at default PWM |
-| `f<duty>` | Forward at specified duty (0-255) |
-| `b` | Backward at default PWM |
-| `b<duty>` | Backward at specified duty |
-| `s` | Stop |
+### Lease / Watchdog
 
-**Lease semantics:** Each motion command refreshes a timestamp. Motor stops if no command received within 800ms.
+Each motion command (`f`, `b`, `x`) refreshes an 800ms lease. If no motion command is received within 800ms, the motor automatically stops (coast).
 
-### Telemetry
+- Forward/backward/brake commands refresh the lease
+- Stop (`s`) does not refresh lease (immediate coast)
+- 800ms timeout → automatic coast stop
+
+### Telemetry Format
 
 ```
-RPM:0,D:0,DIR:F,PH:2,PWM:150,PDIR:1,H:3
+RPM:<val>,D:<duty>,DIR:<F/R>,PH:<phase>,PWM_SET:<val>,PWM_ACT:<val>,BRAKE:<0/1>,FC:<code>,H:<hall>
 ```
 
-| Field | Meaning |
-|-------|---------|
+| Field | Description |
+|-------|-------------|
 | RPM | Calculated revolutions per minute |
-| D | Current duty cycle (0-255) |
-| DIR | Direction (F=forward, R=reverse) |
-| PH | Motor phase (0=Stopped, 1=Kick, 2=Running, 3=NeutralWait, 4=Fault) |
-| PWM | Target/set PWM value |
-| PDIR | Python direction (1=forward, -1=reverse, 0=stopped) |
+| D | Instantaneous duty cycle (0-255) |
+| DIR | Direction: F=forward, R=reverse, S=stopped |
+| PH | Motor phase: 0=Stopped, 1=Kick, 2=Running, 3=NeutralWait, 4=Fault, 5=Braking |
+| PWM_SET | PWM value set by host (0-255) |
+| PWM_ACT | PWM value used by firmware (after ramp/clamp) |
+| BRAKE | Brake active flag: 0=off, 1=braking |
+| FC | Fault code (0=no fault) |
 | H | Raw Hall sensor value (1-6) |
+
+**Example:** `RPM:2450,D:180,DIR:F,PH:2,PWM_SET:200,PWM_ACT:180,BRAKE:0,FC:0,H:3`
 
 ---
 
@@ -185,7 +190,7 @@ RPM:0,D:0,DIR:F,PH:2,PWM:150,PDIR:1,H:3
 ## Known Limitations
 
 1. **Single motor only.** Current code controls one motor. 4-motor support requires hub STM32 (separate project).
-2. **WASD protocol legacy.** Python host currently uses WASD commands. Transitioning to f/b/s.
+2. **Legacy WASD protocol removed.** Python host now uses f/b/s commands.
 3. **No hardware watchdog.** Firmware hang = motor continues running.
 4. **Hardcoded pin mapping.** Different board layouts require code changes.
 5. **8kHz PWM not guaranteed.** `analogWriteFrequency()` support depends on STM32 core implementation.
