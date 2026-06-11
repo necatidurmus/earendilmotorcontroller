@@ -1,0 +1,24 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		},
+		{
+			"name": "f411-asenkron",
+			"path": "../f411-asenkron"
+		},
+		{
+			"name": "neco-f411-test-bldc",
+			"path": "../neco-f411-test-bldc"
+		},
+		{
+			"name": "h7-asenkron-main",
+			"path": "."
+		},
+		{
+			"name": "blackpill-uart-test-for-h7",
+			"path": "../blackpill-uart-test-for-h7"
+		}
+	],
+	"settings": {}
+}
