@@ -37,9 +37,8 @@ static constexpr uint8_t  PWM_RESOLUTION_BITS        = 8;
 // Hedef PWM frekansı — MOSFET anahtarlama hızı
 static constexpr uint32_t PWM_TARGET_FREQ_HZ         = 15000;
 
-// Motor çalışırken izin verilen minimum hedef duty.
-// Not: Kalkış torkunu bununla değil, kickDuty ile veriyoruz.
-static constexpr uint8_t  STARTUP_MIN_DUTY           = 40;
+// Motor çalışırken izin verilen minimum hedef duty (kalkış torku kickDuty ile verilir)
+static constexpr uint8_t  STARTUP_MIN_DUTY           = 0;
 // Kalkışta hall geçişi gelmezse timeout — düşük hız/kalkış için biraz uzatıldı.
 static constexpr uint32_t START_NO_HALL_TIMEOUT_MS   = 700;
 // Yön değiştirirken nötr bekleme süresi — akım sıfırlanması için
@@ -69,8 +68,11 @@ static constexpr uint8_t  POLE_PAIRS                 = 15;
 static constexpr uint32_t TELEMETRY_INTERVAL_MS      = 100;
 // Komut gelmezse motor durdurma süresi (güvenlik)
 static constexpr uint32_t CMD_WATCHDOG_MS             = 800;
-// Komut kuyrugunda stale kabul süresi — uzerinde ise discard
-static constexpr uint32_t CMD_STALE_MS                = 2000;
+// Komut kuyrugunda stale kabul süresi — watchdog'tan küçük olmalı
+static constexpr uint32_t CMD_STALE_MS                = 600;
+
+// Brake timeout — motor süresiz brake'te kalmasın (ms)
+static constexpr uint16_t DEFAULT_BRAKE_HOLD_MS       = 3000;
 
 // Donanımsal watchdog timeout (µs) — 500ms
 static constexpr uint32_t IWDG_TIMEOUT_US             = 500000;
@@ -81,17 +83,41 @@ static constexpr uint32_t IWDG_TIMEOUT_US             = 500000;
 static constexpr uint32_t PID_INTERVAL_MS             = 20;
 // RPM düşük geçiren filtre alfa katsayısı (0-1 arası, yüksek = hızlı yanıt)
 static constexpr float    RPM_FILTER_ALPHA            = 0.25f;
-// PID çıkış PWM sınırları
-static constexpr uint8_t  PID_MAX_PWM                 = 120;
-static constexpr uint8_t  PID_MIN_PWM                 = 0;
 // RPM feedback timeout — bu süre boyunca hall geçişi gelmezse fault (ms)
 static constexpr uint32_t RPM_FEEDBACK_TIMEOUT_MS     = 1000;
-// Varsayılan PID kazançları
-static constexpr float    DEFAULT_PID_KP              = 0.10f;
-static constexpr float    DEFAULT_PID_KI              = 0.00f;
-static constexpr float    DEFAULT_PID_KD              = 0.00f;
+// Varsayılan PID kazançları — artık DEFAULT_SPEED_KP/KI kullanılıyor
+// (geriye uyumluluk için kaldırıldı)
 // Integral anti-windup sınırı
 static constexpr float    PID_INTEGRAL_LIMIT          = 500.0f;
+
+// === Speed PI Control Ayarları ===
+
+// Base PWM/feed-forward — statik sürtünmeyi aşmak için
+static constexpr uint8_t  DEFAULT_BASE_PWM_LOW         = 55;   // hedef RPM <= 30
+static constexpr uint8_t  DEFAULT_BASE_PWM_MID         = 45;   // hedef RPM <= 150
+static constexpr uint8_t  DEFAULT_BASE_PWM_HIGH        = 35;   // hedef RPM > 150
+
+// Start boost PWM değerleri
+static constexpr uint8_t  DEFAULT_BOOST_LOW_PWM        = 65;
+static constexpr uint8_t  DEFAULT_BOOST_MID_PWM        = 65;
+static constexpr uint8_t  DEFAULT_BOOST_HIGH_PWM       = 65;
+static constexpr uint16_t DEFAULT_BOOST_TIME_MS        = 150;
+static constexpr uint8_t  DEFAULT_BOOST_EDGE_THRESH    = 3;
+
+// RPM ramp hızları (RPM/saniye)
+static constexpr float    DEFAULT_RAMP_UP_RPM_SEC      = 100.0f;
+static constexpr float    DEFAULT_RAMP_DOWN_RPM_SEC    = 200.0f;
+
+// Varsayılan Speed PI kazançları
+static constexpr float    DEFAULT_SPEED_KP             = 0.80f;
+static constexpr float    DEFAULT_SPEED_KI             = 0.10f;
+
+// PI çıkış PWM sınırları (speed mode)
+static constexpr uint8_t  SPEED_PI_MAX_PWM             = 180;
+static constexpr uint8_t  SPEED_PI_MIN_PWM             = 0;
+
+// Start boost geçiş RPM eşiği
+static constexpr float    BOOST_RPM_THRESHOLD          = 3.0f;
 
 // === Servis Modu Ayarları ===
 
@@ -156,6 +182,7 @@ struct SavedConfig {
   uint16_t rampIntervalMs;
 
   uint8_t defaultPwm;  // Control modu varsayılan PWM (EEPROM'dan okunur)
+  uint16_t brakeHoldMs; // Brake timeout süresi (ms)
 
   uint8_t checksum;
 };
@@ -167,7 +194,7 @@ static constexpr int      EEPROM_ADDR_MAP = 0;
 
 // Config EEPROM adresi ve doğrulama sabitleri
 static constexpr uint32_t CFG_MAGIC       = 0x43464731UL; // "CFG1"
-static constexpr uint8_t  CFG_VERSION     = 3;  // v3: tuned kick/ramp defaults
+static constexpr uint8_t  CFG_VERSION     = 4;  // v4: brakeHoldMs eklendi
 static constexpr int      EEPROM_ADDR_CFG = 64;
 
 // Çalışma modu (Normal/Control/Settings) EEPROM adresi
@@ -215,6 +242,17 @@ enum class IdentifyPhase : uint8_t {
   SettleB   // İkinci hall okuma bekleme
 };
 
+enum class SpeedControlMode : uint8_t {
+  Duty = 0,   // Manuel PWM/duty modu
+  Speed = 1   // RPM kapalı döngü hız kontrolü
+};
+
+enum class SpeedPhase : uint8_t {
+  Idle = 0,       // Hedef RPM yok
+  StartBoost,     // Kalkış boost aktif
+  SpeedPI         // PI kontrol aktif
+};
+
 enum class CommandSource : uint8_t {
   USB = 0,
   UART    // CMD serial port
@@ -250,6 +288,7 @@ struct HallRuntime {
 
   uint32_t prevTransitionUs = 0;  // Önceki hall geçiş zamanı (RPM için)
   uint32_t hallPeriodUs = 0;      // Hall periyodu (RPM hesaplaması)
+  uint32_t validTransitionCount = 0; // Geçerli hall geçiş sayısı (speed mode)
 };
 
 // Motor runtime — faz, duty, ramp, fault yönetimi
@@ -352,6 +391,7 @@ CommandSource serviceReplySrc = CommandSource::USB;
 
 // Control modu runtime
 uint8_t  controlPwmValue = 150;  // varsayılan sürüş PWM
+uint16_t brakeHoldMs = DEFAULT_BRAKE_HOLD_MS; // brake timeout
 int8_t   controlDirection = 0;   // 0=durdu, 1=ileri, -1=geri
 
 // Runtime nesneleri — hall, motor, servis
@@ -386,23 +426,51 @@ volatile uint8_t  isr_rawHall = 0;
 volatile uint32_t isr_hallTimeUs = 0;
 volatile bool     isr_hallEvent = false;
 
-// === PID RPM Control Runtime ===
+// === PID/Speed PI RPM Control Runtime ===
 
-// PID çalışma modu
 struct PidRuntime {
-  bool enabled = false;           // PID kapalı döngü modu aktif mi
-  int32_t targetRpm = 0;          // Hedef RPM (signed: +ileri, -geri)
-  float kp = DEFAULT_PID_KP;
-  float ki = DEFAULT_PID_KI;
-  float kd = DEFAULT_PID_KD;
+  bool enabled = false;                    // Speed PI modu aktif mi
+  SpeedControlMode controlMode = SpeedControlMode::Duty;
+  SpeedPhase speedPhase = SpeedPhase::Idle;
 
-  float filteredRpm = 0.0f;       // Düşük geçiren filtrelenmiş RPM
-  float errorIntegral = 0.0f;     // Integral toplamı
-  float prevError = 0.0f;         // Önceki hata (derivative için)
-  uint32_t lastPidTickMs = 0;     // Son PID döngüsü zamanı
-  uint32_t lastHallEventMs = 0;   // Son hall geçiş zamanı (feedback timeout)
-  int8_t pidDirection = 0;        // PID yönü: 0=durdu, 1=ileri, -1=geri
-  bool firstRun = true;           // İlk çalıştırma bayrağı
+  int32_t targetRpmCmd = 0;               // Komut edilen hedef RPM
+  float targetRpmRamped = 0.0f;           // Ramp edilmiş hedef RPM (PI girdisi)
+  float kp = DEFAULT_SPEED_KP;
+  float ki = DEFAULT_SPEED_KI;
+
+  float filteredRpm = 0.0f;               // Düşük geçiren filtrelenmiş RPM
+  float errorIntegral = 0.0f;             // Integral toplamı
+  float prevError = 0.0f;                 // Önceki hata
+  uint32_t lastPidTickMs = 0;             // Son PI döngüsü zamanı
+  uint32_t lastHallEventMs = 0;           // Son hall geçiş zamanı
+  int8_t pidDirection = 0;                // PI yönü: 0=durdu, 1=ileri, -1=geri
+  bool firstRun = true;                   // İlk çalıştırma bayrağı
+
+  // Base PWM/feed-forward
+  uint8_t basePwmLow = DEFAULT_BASE_PWM_LOW;
+  uint8_t basePwmMid = DEFAULT_BASE_PWM_MID;
+  uint8_t basePwmHigh = DEFAULT_BASE_PWM_HIGH;
+
+  // Start boost
+  uint8_t boostLowPwm = DEFAULT_BOOST_LOW_PWM;
+  uint8_t boostMidPwm = DEFAULT_BOOST_MID_PWM;
+  uint8_t boostHighPwm = DEFAULT_BOOST_HIGH_PWM;
+  uint16_t boostTimeMs = DEFAULT_BOOST_TIME_MS;
+  uint8_t boostEdgeThreshold = DEFAULT_BOOST_EDGE_THRESH;
+
+  // RPM ramp
+  float rampUpPerSec = DEFAULT_RAMP_UP_RPM_SEC;
+  float rampDownPerSec = DEFAULT_RAMP_DOWN_RPM_SEC;
+
+  // Start boost runtime
+  uint32_t boostStartMs = 0;
+  uint32_t boostStartEdgeCount = 0;
+  uint32_t hallEdgeCounter = 0;           // Toplam hall kenar sayacı
+
+  // Telemetri için son hesaplama değerleri
+  float piOutput = 0.0f;
+  float basePwm = 0.0f;
+  float rawRpm = 0.0f;
 };
 
 PidRuntime pidRt;
@@ -446,13 +514,24 @@ void resetPidState() {
   pidRt.filteredRpm = 0.0f;
   pidRt.firstRun = true;
   pidRt.lastHallEventMs = 0;
+  pidRt.hallEdgeCounter = 0;
+  pidRt.speedPhase = SpeedPhase::Idle;
+  pidRt.targetRpmRamped = 0.0f;
+  pidRt.piOutput = 0.0f;
+  pidRt.basePwm = 0.0f;
+  pidRt.rawRpm = 0.0f;
+  pidRt.boostStartMs = 0;
+  pidRt.boostStartEdgeCount = 0;
 }
 
 // PID modunu devre dışı bırak — tüm durumu sıfırla
 void disablePidMode() {
   pidRt.enabled = false;
-  pidRt.targetRpm = 0;
+  pidRt.controlMode = SpeedControlMode::Duty;
+  pidRt.targetRpmCmd = 0;
+  pidRt.targetRpmRamped = 0.0f;
   pidRt.pidDirection = 0;
+  pidRt.speedPhase = SpeedPhase::Idle;
   resetPidState();
 }
 
@@ -478,42 +557,63 @@ float applyRpmFilter(float rawRpm) {
   return pidRt.filteredRpm;
 }
 
-// PID kontrol döngüsü — 50Hz (20ms) çalışır, motorRt.targetDuty'yi günceller
-// NOT: Doğrudan MOSFET yazmaz, mevcut ramp/kick mekanizmasına bırakır
-void runPidControlLoop(uint32_t nowMs) {
+// Speed PI kontrol döngüsü — 50Hz (20ms) çalışır
+// MotorRt.targetDuty ve currentDuty'yi günceller
+// NOT: Doğrudan MOSFET yazmaz, mevcut motorControlTick'e bırakır
+void runSpeedControlLoop(uint32_t nowMs) {
   if (!pidRt.enabled) return;
   if ((uint32_t)(nowMs - pidRt.lastPidTickMs) < PID_INTERVAL_MS) return;
   pidRt.lastPidTickMs = nowMs;
 
-  // Hedef RPM 0 ise motor durdur (zaten durmuş olabilir)
-  if (pidRt.targetRpm == 0) {
+  float dt = (float)PID_INTERVAL_MS / 1000.0f;
+
+  // Hedef RPM 0 → motor durdur
+  if (pidRt.targetRpmCmd == 0) {
     if (isMotorDriveActive()) {
       stopMotorImmediate();
-      resetPidState();
     }
+    pidRt.targetRpmRamped = 0.0f;
+    pidRt.speedPhase = SpeedPhase::Idle;
+    resetPidState();
     motorRt.targetDuty = 0;
     return;
   }
 
-  // Motor duruyorsa ve hedef RPM != 0 ise başlat
+  // RPM ramp hesapla
+  float targetAbs = (float)abs(pidRt.targetRpmCmd);
+  if (pidRt.targetRpmRamped < targetAbs) {
+    pidRt.targetRpmRamped += pidRt.rampUpPerSec * dt;
+    if (pidRt.targetRpmRamped > targetAbs) pidRt.targetRpmRamped = targetAbs;
+  } else if (pidRt.targetRpmRamped > targetAbs) {
+    pidRt.targetRpmRamped -= pidRt.rampDownPerSec * dt;
+    if (pidRt.targetRpmRamped < targetAbs) pidRt.targetRpmRamped = targetAbs;
+  }
+
+  // Yön belirle
+  int8_t dir = (pidRt.targetRpmCmd > 0) ? 1 : -1;
+
+  // Motor duruyorsa başlat
   if (!isMotorDriveActive() && motorRt.phase != MotorPhase::NeutralWait) {
-    int8_t dir = (pidRt.targetRpm > 0) ? 1 : -1;
     // Yön değişimi kontrolü
     if (motorRt.direction != 0 && motorRt.direction != dir) {
-      // Nötr bekleme başlat
       beginNeutralDirectionSwitch(dir);
       return;
     }
     // Motor başlat
-    motorRt.targetDuty = PID_MIN_PWM;
+    motorRt.targetDuty = SPEED_PI_MIN_PWM;
     beginRunRequest(dir);
     pidRt.pidDirection = dir;
     pidRt.lastHallEventMs = nowMs;
-    resetPidState();
+    // Start boost fazına geç
+    pidRt.speedPhase = SpeedPhase::StartBoost;
+    pidRt.boostStartMs = nowMs;
+    pidRt.boostStartEdgeCount = pidRt.hallEdgeCounter;
+    pidRt.errorIntegral = 0.0f;
+    pidRt.firstRun = true;
     return;
   }
 
-  // Hall feedback timeout kontrolü
+  // Hall feedback timeout
   if (pidRt.lastHallEventMs != 0 && (uint32_t)(nowMs - pidRt.lastHallEventMs) > RPM_FEEDBACK_TIMEOUT_MS) {
     triggerFault(MotorFaultCode::StartupNoHall);
     disablePidMode();
@@ -522,43 +622,104 @@ void runPidControlLoop(uint32_t nowMs) {
 
   // Ham RPM hesapla ve filtrele
   float rawRpm = (float)calculateRPM();
+  pidRt.rawRpm = rawRpm;
   float filteredRpm = applyRpmFilter(rawRpm);
 
-  // Hata hesapla (mutlak değer üzerinden, yön zaten belirlenmiş)
-  float targetAbsRpm = (float)abs(pidRt.targetRpm);
-  float error = targetAbsRpm - filteredRpm;
-
-  // PID hesaplama
-  float pTerm = pidRt.kp * error;
-
-  // Integral güncelleme + anti-windup
-  pidRt.errorIntegral += error * (float)PID_INTERVAL_MS / 1000.0f;
-  pidRt.errorIntegral = clampValue<float>(pidRt.errorIntegral, -PID_INTEGRAL_LIMIT, PID_INTEGRAL_LIMIT);
-  float iTerm = pidRt.ki * pidRt.errorIntegral;
-
-  // Derivative (ilk çalışmada sıfır)
-  float dTerm = 0.0f;
-  if (!pidRt.firstRun) {
-    float derivative = (error - pidRt.prevError) / ((float)PID_INTERVAL_MS / 1000.0f);
-    dTerm = pidRt.kd * derivative;
+  // Base PWM hesapla (feed-forward)
+  float basePwm;
+  if (pidRt.targetRpmRamped <= 30.0f) {
+    basePwm = (float)pidRt.basePwmLow;
+  } else if (pidRt.targetRpmRamped <= 150.0f) {
+    basePwm = (float)pidRt.basePwmMid;
+  } else {
+    basePwm = (float)pidRt.basePwmHigh;
   }
-  pidRt.prevError = error;
-  pidRt.firstRun = false;
+  pidRt.basePwm = basePwm;
 
-  // PID çıkış toplamı
-  float pidOutput = pTerm + iTerm + dTerm;
+  // ── Start Boost fazı ──
+  if (pidRt.speedPhase == SpeedPhase::StartBoost) {
+    // Boost PWM hesapla
+    uint8_t boostPwm;
+    if (pidRt.targetRpmRamped <= 30.0f) {
+      boostPwm = pidRt.boostLowPwm;
+    } else if (pidRt.targetRpmRamped <= 150.0f) {
+      boostPwm = pidRt.boostMidPwm;
+    } else {
+      boostPwm = pidRt.boostHighPwm;
+    }
 
-  // Çıkışı PWM sınırlarına clamp
-  uint8_t dutyCmd = (uint8_t)clampValue<float>(pidOutput, (float)PID_MIN_PWM, (float)PID_MAX_PWM);
+    // Hall kenar sayacı
+    uint32_t edgesSinceBoost = pidRt.hallEdgeCounter - pidRt.boostStartEdgeCount;
 
-  // Minimum etkin duty — hedef RPM != 0 iken motor dönmeli
-  if (dutyCmd == 0 && pidRt.targetRpm != 0) {
-    dutyCmd = 1;
+    // Geçiş koşulları
+    bool edgesOk = (edgesSinceBoost >= pidRt.boostEdgeThreshold);
+    bool rpmOk = (filteredRpm > BOOST_RPM_THRESHOLD);
+    bool timeout = ((uint32_t)(nowMs - pidRt.boostStartMs) >= pidRt.boostTimeMs);
+
+    if (edgesOk || rpmOk) {
+      // SpeedPI fazına geç
+      pidRt.speedPhase = SpeedPhase::SpeedPI;
+      pidRt.errorIntegral = 0.0f;
+      pidRt.firstRun = true;
+    } else if (timeout) {
+      // Timeout — boost süresi doldu, PI'a geç (retry)
+      pidRt.speedPhase = SpeedPhase::SpeedPI;
+      pidRt.errorIntegral = 0.0f;
+      pidRt.firstRun = true;
+    }
+
+    // Boost duty uygula (PI bypass)
+    motorRt.currentDuty = boostPwm;
+    motorRt.targetDuty = boostPwm;
+    return;
   }
 
-  // Motor durumu uygunsa duty güncelle
+  // ── Speed PI fazı ──
+  if (pidRt.speedPhase == SpeedPhase::SpeedPI) {
+    float error = pidRt.targetRpmRamped - filteredRpm;
+
+    // P terimi
+    float pTerm = pidRt.kp * error;
+
+    // Conditional anti-windup: sadece çıkış doymamışsa integral güncelle
+    float tentativeOutput = basePwm + pTerm + pidRt.ki * (pidRt.errorIntegral + error * dt);
+    bool saturatedHigh = (tentativeOutput >= (float)SPEED_PI_MAX_PWM);
+    bool saturatedLow = (tentativeOutput <= (float)SPEED_PI_MIN_PWM);
+    bool errorReducesSat = (saturatedHigh && error < 0) || (saturatedLow && error > 0);
+
+    if ((!saturatedHigh && !saturatedLow) || errorReducesSat) {
+      pidRt.errorIntegral += error * dt;
+    }
+    pidRt.errorIntegral = clampValue<float>(pidRt.errorIntegral, -PID_INTEGRAL_LIMIT, PID_INTEGRAL_LIMIT);
+
+    // I terimi
+    float iTerm = pidRt.ki * pidRt.errorIntegral;
+
+    // PI çıkışı (D yok)
+    float piOutput = basePwm + pTerm + iTerm;
+    pidRt.piOutput = piOutput;
+
+    // Çıkışı sınırla
+    uint8_t dutyCmd = (uint8_t)clampValue<float>(piOutput, (float)SPEED_PI_MIN_PWM, (float)SPEED_PI_MAX_PWM);
+
+    // Minimum duty — hedef RPM != 0 iken motor dönmeli
+    if (dutyCmd == 0 && pidRt.targetRpmCmd != 0) {
+      dutyCmd = 1;
+    }
+
+    // Duty uygula (ramp bypass — PI doğrudan kontrol eder)
+    if (isMotorDriveActive()) {
+      motorRt.targetDuty = dutyCmd;
+      motorRt.currentDuty = dutyCmd;
+    }
+
+    pidRt.prevError = error;
+    pidRt.firstRun = false;
+  }
+
+  // Speed mode'da PI aktifken watchdog'u yenile
   if (isMotorDriveActive()) {
-    motorRt.targetDuty = dutyCmd;
+    lastMotorCommandMs = nowMs;
   }
 }
 
@@ -759,12 +920,14 @@ void updateHallRuntime(uint32_t mainUs) {
   // PID feedback timeout güncelle — geçerli hall geçişi
   if (hadIsrEvent && pidRt.enabled) {
     pidRt.lastHallEventMs = millis();
+    pidRt.hallEdgeCounter++;
   }
 
   hallRt.lastValidRaw = tRaw;
   hallRt.lastValidState = newState;
   hallRt.lastValidUs = tTime;
   hallRt.invalidSinceUs = 0;
+  hallRt.validTransitionCount++;
 }
 
 // ============================================================
@@ -804,7 +967,9 @@ void allBrake() {
 
 // Brake durumuna geç — yön ve restart sıfırla
 void enterBrake() {
+  memset(&pendingReq, 0, sizeof(pendingReq)); // pending temizle — restart önle
   motorRt.phase = MotorPhase::Brake;
+  motorRt.phaseStartMs = millis();
   motorRt.direction = 0;
   motorRt.currentDuty = 0;
   motorRt.targetDuty = 0;
@@ -938,6 +1103,7 @@ void clampConfig() {
   rampStep = clampValue<uint8_t>(rampStep, 1, 64);
   rampIntervalMs = clampValue<uint16_t>(rampIntervalMs, 1, 1000);
   kickMs = clampValue<uint16_t>(kickMs, 0, 3000);
+  brakeHoldMs = clampValue<uint16_t>(brakeHoldMs, 500, 10000);
 }
 
 // Varsayılan config değerlerini yükle
@@ -949,6 +1115,7 @@ void loadDefaultConfig() {
   rampStep = 32;
   rampIntervalMs = 2;
   controlPwmValue = 150;
+  brakeHoldMs = DEFAULT_BRAKE_HOLD_MS;
   clampConfig();
 }
 
@@ -964,6 +1131,8 @@ uint8_t calcCfgChecksum(const SavedConfig& cfg) {
   x ^= (uint8_t)(cfg.rampIntervalMs & 0xFF);
   x ^= (uint8_t)(cfg.rampIntervalMs >> 8);
   x ^= cfg.defaultPwm;
+  x ^= (uint8_t)(cfg.brakeHoldMs & 0xFF);
+  x ^= (uint8_t)(cfg.brakeHoldMs >> 8);
   return x;
 }
 
@@ -979,6 +1148,7 @@ bool saveConfigToStorage() {
   cfg.rampStep = rampStep;
   cfg.rampIntervalMs = rampIntervalMs;
   cfg.defaultPwm = controlPwmValue;
+  cfg.brakeHoldMs = brakeHoldMs;
   cfg.checksum = calcCfgChecksum(cfg);
 
   EEPROM.put(EEPROM_ADDR_CFG, cfg);
@@ -1007,6 +1177,7 @@ bool loadConfigFromStorage() {
   rampStep = cfg.rampStep;
   rampIntervalMs = cfg.rampIntervalMs;
   controlPwmValue = cfg.defaultPwm;
+  brakeHoldMs = cfg.brakeHoldMs;
   clampConfig();
   return true;
 }
@@ -1094,14 +1265,18 @@ void printHelp(CommandSource src) {
   replyLn(src, F(" debug on/off"));
   replyLn(src, F(" clrerr         (clear error flags)"));
   replyLn(src, F(" mode          (show current)"));
+  replyLn(src, F(" mode duty     (manual PWM)"));
+  replyLn(src, F(" mode speed    (RPM PI control)"));
   replyLn(src, F(" mode control   (WASD+RPM)"));
   replyLn(src, F(" mode settings (temiz monitör)"));
   replyLn(src, F(" mode normal   (CLI+telemetri)"));
-  replyLn(src, F("--- PID RPM Control ---"));
-  replyLn(src, F(" pid on/off"));
-  replyLn(src, F(" rpm <signed>"));
-  replyLn(src, F(" kp/ki/kd <float>"));
-  replyLn(src, F(" pidstatus"));
+  replyLn(src, F("--- Speed PI Control ---"));
+  replyLn(src, F(" rpm <signed>   (set target RPM)"));
+  replyLn(src, F(" kp/ki <float>  (PI gains)"));
+  replyLn(src, F(" base <lo> <mid> <hi>"));
+  replyLn(src, F(" boost <lo> <mid> <hi> <ms>"));
+  replyLn(src, F(" ramp <up> <down> (RPM/sec)"));
+  replyLn(src, F(" spstat         (speed PI status)"));
   replyLn(src, F(" dbg on/off    (telemetry debug)"));
   replyLn(src, F(" telper <ms>   (telemetry period)"));
   replyLn(src, F("============================="));
@@ -1148,11 +1323,13 @@ void printStatus(CommandSource src) {
   replyFC(src, F("QueueOverflowFlag: ")); replyLn(src, queueOverflowFlag ? F("YES") : F("NO"));
 
   replyFC(src, F("PID: ")); reply(src, pidRt.enabled ? F("ON") : F("OFF"));
-  replyFC(src, F(" T=")); reply(src, pidRt.targetRpm);
+  replyFC(src, F(" Mode=")); reply(src, (uint8_t)pidRt.controlMode == 0 ? F("DUTY") : F("SPEED"));
+  replyFC(src, F(" Phase=")); reply(src, (uint8_t)pidRt.speedPhase);
+  replyFC(src, F(" Tcmd=")); reply(src, pidRt.targetRpmCmd);
+  replyFC(src, F(" Tamp=")); reply(src, (int32_t)pidRt.targetRpmRamped);
   replyFC(src, F(" F=")); reply(src, (int32_t)pidRt.filteredRpm);
   replyFC(src, F(" Kp=")); reply(src, pidRt.kp);
-  replyFC(src, F(" Ki=")); reply(src, pidRt.ki);
-  replyFC(src, F(" Kd=")); replyLn(src, pidRt.kd);
+  replyFC(src, F(" Ki=")); replyLn(src, pidRt.ki);
 
   if (activeMode == OperatingMode::Control) {
     replyFC(src, F("ControlPWM: ")); replyLn(src, controlPwmValue);
@@ -1218,17 +1395,18 @@ bool enqueueCommand(const char* cmd, CommandSource src) {
 
 // Komut kuyrugundan dequeue — stale command discard
 bool dequeueCommand(CommandItem* out) {
-  if (cmdQueueHead == cmdQueueTail) return false;
-  *out = cmdQueue[cmdQueueTail];
-  // [architecture] Stale command discard: 500ms'den eski komutlar atlanir
-  uint32_t now = millis();
-  if ((uint32_t)(now - out->timestampMs) > CMD_STALE_MS) {
-    sysLn(F("[STALE] cmd discarded")); // [cleanup] stale command log
+  while (cmdQueueHead != cmdQueueTail) {
+    *out = cmdQueue[cmdQueueTail];
     cmdQueueTail = (uint8_t)((cmdQueueTail + 1) % CMD_QUEUE_LEN);
-    return false; // stale, isleme
+    // Stale command discard
+    uint32_t now = millis();
+    if ((uint32_t)(now - out->timestampMs) > CMD_STALE_MS) {
+      sysLn(F("[STALE] cmd discarded"));
+      continue; // stale — sonraki elemana geç
+    }
+    return true;
   }
-  cmdQueueTail = (uint8_t)((cmdQueueTail + 1) % CMD_QUEUE_LEN);
-  return true;
+  return false;
 }
 
 // Ring buffer'dan UART portunu oku — gelen karakterleri topla
@@ -1304,9 +1482,17 @@ bool startsWith(const char* s, const char* prefix) {
 // [architecture] Latest-command-wins helper
 static bool isMotionCommand(const char* cmd) {
   if (cmd[0] == '\0') return false;
-  char c = cmd[0];
-  if (c == 'f' || c == 'b' || c == 's') return true;
+  // Tek karakter: f, b, s, x
+  if (cmd[1] == '\0') {
+    char c = cmd[0];
+    return (c == 'f' || c == 'b' || c == 's' || c == 'x');
+  }
+  // f/b ile duty: "f123", "b200"
+  if ((cmd[0] == 'f' || cmd[0] == 'b') && cmd[1] >= '0' && cmd[1] <= '9') return true;
+  // Tam string komutlar
   if (strcmp(cmd, "stop") == 0 || strcmp(cmd, "forward") == 0 || strcmp(cmd, "backward") == 0) return true;
+  if (strcmp(cmd, "brake") == 0) return true;
+  // pwm/rpm: sadece "pwm" (query) veya "pwm <val>" (set)
   if (startsWith(cmd, "pwm")) return true;
   if (startsWith(cmd, "rpm")) return true;
   return false;
@@ -1346,6 +1532,7 @@ bool parseFloatAfterPrefix(const char* s, const char* prefix, float* out) {
 // Motoru anında durdur — tüm fazlar kapatılır
 void stopMotorImmediate() {
   motorRt.phase = MotorPhase::Stopped;
+  motorRt.direction = 0;
   motorRt.restartPending = false;
   motorRt.currentDuty = 0;
   allOff();
@@ -1356,6 +1543,7 @@ void stopMotorImmediate() {
 void triggerFault(MotorFaultCode fault) {
   motorRt.phase = MotorPhase::Fault;
   motorRt.faultCode = fault;
+  motorRt.direction = 0;
   motorRt.restartPending = false;
   motorRt.currentDuty = 0;
   allOff();
@@ -1370,24 +1558,21 @@ void beginKickOrRun(int8_t requestedDirection) {
   motorRt.direction = (requestedDirection >= 0) ? 1 : -1;
 
   motorRt.targetDuty = clampValue<uint8_t>(motorRt.targetDuty, 0, 255);
-  if (motorRt.targetDuty < STARTUP_MIN_DUTY) {
-    motorRt.targetDuty = STARTUP_MIN_DUTY;
-  }
 
   motorRt.phaseStartMs = millis();
   motorRt.lastRampUpdateMs = motorRt.phaseStartMs;
   motorRt.startHallDeadlineMs = motorRt.phaseStartMs + START_NO_HALL_TIMEOUT_MS;
   motorRt.faultCode = MotorFaultCode::None;
 
-  if (kickEnabled && kickMs > 0) {
+  if (kickEnabled && kickMs > 0 && !pidRt.enabled) {
     const uint8_t ksDuty = (kickDuty > motorRt.targetDuty) ? kickDuty : motorRt.targetDuty;
     motorRt.currentDuty = ksDuty;
     motorRt.phase = MotorPhase::Kick;
   } else {
     motorRt.phase = MotorPhase::Running;
-    if (rampEnabled) {
+    if (rampEnabled && !pidRt.enabled) {
       if (motorRt.currentDuty == 0) {
-        motorRt.currentDuty = min<uint8_t>(STARTUP_MIN_DUTY, motorRt.targetDuty);
+        motorRt.currentDuty = 0;
       }
     } else {
       motorRt.currentDuty = motorRt.targetDuty;
@@ -1420,10 +1605,6 @@ void beginRunRequest(int8_t requestedDirection) {
     allOff();
   }
 
-  if (motorRt.targetDuty < STARTUP_MIN_DUTY) {
-    motorRt.targetDuty = STARTUP_MIN_DUTY;
-  }
-
   if (isMotorDriveActive() || motorRt.phase == MotorPhase::Fault) {
     if (motorRt.direction != ((requestedDirection >= 0) ? 1 : -1) ||
         motorRt.phase == MotorPhase::Fault) {
@@ -1445,11 +1626,10 @@ void beginRunRequest(int8_t requestedDirection) {
 
 // Duty state güncelleme — ramp, kick, hedef duty yönetimi
 void updateDutyState(uint32_t nowMs) {
-  motorRt.targetDuty = clampValue<uint8_t>(motorRt.targetDuty, 0, 255);
+  // Speed mode: PI kontrol duty'yi doğrudan ayarlar, ramp/kick bypass
+  if (pidRt.enabled) return;
 
-  if (motorRt.targetDuty < STARTUP_MIN_DUTY) {
-    motorRt.targetDuty = STARTUP_MIN_DUTY;
-  }
+  motorRt.targetDuty = clampValue<uint8_t>(motorRt.targetDuty, 0, 255);
 
   if (motorRt.phase == MotorPhase::Kick) {
     const uint8_t req = (kickDuty > motorRt.targetDuty) ? kickDuty : motorRt.targetDuty;
@@ -1977,23 +2157,26 @@ void processCommand(char* cmd, CommandSource src) {
     return;
   }
 
-  // ── PID komutları ──
-  if (strcmp(cmd, "pid on") == 0) {
+  // ── Speed PI komutları ──
+  if (strcmp(cmd, "pid on") == 0 || strcmp(cmd, "mode speed") == 0) {
     pidRt.enabled = true;
+    pidRt.controlMode = SpeedControlMode::Speed;
     resetPidState();
-    replyLn(src, F("[OK] PID ON"));
+    replyLn(src, F("[OK] Speed PI ON"));
     return;
   }
 
-  if (strcmp(cmd, "pid off") == 0) {
+  if (strcmp(cmd, "pid off") == 0 || strcmp(cmd, "mode duty") == 0) {
     disablePidMode();
-    replyLn(src, F("[OK] PID OFF"));
+    replyLn(src, F("[OK] Speed PI OFF (Duty mode)"));
     return;
   }
 
   if (strcmp(cmd, "rpm") == 0) {
-    replyFC(src, F("[INFO] TargetRPM="));
-    reply(src, pidRt.targetRpm);
+    replyFC(src, F("[INFO] TargetRPM_Cmd="));
+    reply(src, pidRt.targetRpmCmd);
+    replyFC(src, F(" Ramped="));
+    reply(src, (int32_t)pidRt.targetRpmRamped);
     replyFC(src, F(" Measured="));
     replyLn(src, calculateRPM());
     return;
@@ -2001,11 +2184,12 @@ void processCommand(char* cmd, CommandSource src) {
 
   if (parseLongAfterPrefix(cmd, "rpm ", &v)) {
     if (!pidRt.enabled) {
-      replyLn(src, F("[ERR] PID not enabled"));
+      replyLn(src, F("[ERR] Not in speed mode (use: mode speed)"));
       return;
     }
-    pidRt.targetRpm = (int32_t)v;
+    pidRt.targetRpmCmd = (int32_t)v;
     pidRt.lastHallEventMs = millis();
+    lastMotorCommandMs = millis();
     // Yön değişimi kontrolü
     int8_t newDir = (v > 0) ? 1 : ((v < 0) ? -1 : 0);
     if (v == 0) {
@@ -2041,28 +2225,162 @@ void processCommand(char* cmd, CommandSource src) {
     return;
   }
 
+  // kd artık kullanılmıyor — geriye uyumluluk için kabul et ama etkisi yok
   if (parseFloatAfterPrefix(cmd, "kd ", &fv)) {
-    pidRt.kd = clampValue<float>(fv, 0.0f, 10.0f);
-    replyFC(src, F("[OK] Kd="));
-    replyLn(src, pidRt.kd);
+    replyLn(src, F("[INFO] Kd not used (PI only)"));
     return;
   }
 
-  if (strcmp(cmd, "pidstatus") == 0) {
-    replyFC(src, F("PID:"));
-    reply(src, pidRt.enabled ? F("ON") : F("OFF"));
-    replyFC(src, F(" T="));
-    reply(src, pidRt.targetRpm);
-    replyFC(src, F(" F="));
-    reply(src, (int32_t)pidRt.filteredRpm);
-    replyFC(src, F(" Kp="));
-    reply(src, pidRt.kp);
-    replyFC(src, F(" Ki="));
-    reply(src, pidRt.ki);
-    replyFC(src, F(" Kd="));
-    reply(src, pidRt.kd);
-    replyFC(src, F(" I="));
-    replyLn(src, (int32_t)pidRt.errorIntegral);
+  // pi <kp> <ki> — her iki kazancı aynı anda ayarla
+  if (startsWith(cmd, "pi ")) {
+    const char* p = cmd + 3;
+    while (*p == ' ') p++;
+    char* end1 = nullptr;
+    float newKp = strtof(p, &end1);
+    if (end1 != p) {
+      while (*end1 == ' ') end1++;
+      char* end2 = nullptr;
+      float newKi = strtof(end1, &end2);
+      if (end2 != end1) {
+        pidRt.kp = clampValue<float>(newKp, 0.0f, 10.0f);
+        pidRt.ki = clampValue<float>(newKi, 0.0f, 10.0f);
+        replyFC(src, F("[OK] Kp="));
+        reply(src, pidRt.kp);
+        replyFC(src, F(" Ki="));
+        replyLn(src, pidRt.ki);
+        return;
+      }
+    }
+    replyLn(src, F("[ERR] Usage: pi <kp> <ki>"));
+    return;
+  }
+
+  // base <low> <mid> <high> — base PWM değerleri
+  if (startsWith(cmd, "base ")) {
+    const char* p = cmd + 5;
+    while (*p == ' ') p++;
+    long lo = strtol(p, nullptr, 10);
+    const char* p2 = p;
+    while (*p2 && *p2 != ' ') p2++;
+    while (*p2 == ' ') p2++;
+    long mid = strtol(p2, nullptr, 10);
+    const char* p3 = p2;
+    while (*p3 && *p3 != ' ') p3++;
+    while (*p3 == ' ') p3++;
+    long hi = strtol(p3, nullptr, 10);
+    pidRt.basePwmLow = (uint8_t)clampValue<long>(lo, 0, 255);
+    pidRt.basePwmMid = (uint8_t)clampValue<long>(mid, 0, 255);
+    pidRt.basePwmHigh = (uint8_t)clampValue<long>(hi, 0, 255);
+    replyFC(src, F("[OK] BasePWM Low="));
+    reply(src, pidRt.basePwmLow);
+    replyFC(src, F(" Mid="));
+    reply(src, pidRt.basePwmMid);
+    replyFC(src, F(" High="));
+    replyLn(src, pidRt.basePwmHigh);
+    return;
+  }
+
+  // boost <lo> <mid> <hi> <ms> — start boost değerleri
+  if (startsWith(cmd, "boost ")) {
+    const char* p = cmd + 6;
+    while (*p == ' ') p++;
+    long lo = strtol(p, nullptr, 10);
+    while (*p && *p != ' ') p++; while (*p == ' ') p++;
+    long mid = strtol(p, nullptr, 10);
+    while (*p && *p != ' ') p++; while (*p == ' ') p++;
+    long hi = strtol(p, nullptr, 10);
+    while (*p && *p != ' ') p++; while (*p == ' ') p++;
+    long ms = strtol(p, nullptr, 10);
+    pidRt.boostLowPwm = (uint8_t)clampValue<long>(lo, 0, 255);
+    pidRt.boostMidPwm = (uint8_t)clampValue<long>(mid, 0, 255);
+    pidRt.boostHighPwm = (uint8_t)clampValue<long>(hi, 0, 255);
+    pidRt.boostTimeMs = (uint16_t)clampValue<long>(ms, 10, 2000);
+    replyFC(src, F("[OK] Boost Low="));
+    reply(src, pidRt.boostLowPwm);
+    replyFC(src, F(" Mid="));
+    reply(src, pidRt.boostMidPwm);
+    replyFC(src, F(" High="));
+    reply(src, pidRt.boostHighPwm);
+    replyFC(src, F(" Ms="));
+    replyLn(src, pidRt.boostTimeMs);
+    return;
+  }
+
+  // ramp <up> <down> — RPM ramp hızları
+  if (startsWith(cmd, "ramp ") && !startsWith(cmd, "ramp on") && !startsWith(cmd, "ramp off") &&
+      !startsWith(cmd, "ramprate") && !startsWith(cmd, "rampms")) {
+    const char* p = cmd + 5;
+    while (*p == ' ') p++;
+    char* end1 = nullptr;
+    float up = strtof(p, &end1);
+    if (end1 != p) {
+      while (*end1 == ' ') end1++;
+      char* end2 = nullptr;
+      float down = strtof(end1, &end2);
+      if (end2 != end1) {
+        pidRt.rampUpPerSec = clampValue<float>(up, 1.0f, 10000.0f);
+        pidRt.rampDownPerSec = clampValue<float>(down, 1.0f, 10000.0f);
+        replyFC(src, F("[OK] Ramp Up="));
+        reply(src, (int32_t)pidRt.rampUpPerSec);
+        replyFC(src, F(" Down="));
+        replyLn(src, (int32_t)pidRt.rampDownPerSec);
+        return;
+      }
+    }
+    replyLn(src, F("[ERR] Usage: ramp <up_rpm_s> <down_rpm_s>"));
+    return;
+  }
+
+  if (strcmp(cmd, "pidstatus") == 0 || strcmp(cmd, "spstat") == 0) {
+    replyFC(src, F("--- SPEED PI STATUS ---"));
+    replyLn(src);
+    replyFC(src, F("ControlMode: "));
+    replyLn(src, (uint8_t)pidRt.controlMode == 0 ? F("DUTY") : F("SPEED"));
+    replyFC(src, F("SpeedPhase: "));
+    switch (pidRt.speedPhase) {
+      case SpeedPhase::Idle: replyLn(src, F("IDLE")); break;
+      case SpeedPhase::StartBoost: replyLn(src, F("START_BOOST")); break;
+      case SpeedPhase::SpeedPI: replyLn(src, F("SPEED_PI")); break;
+    }
+    replyFC(src, F("MotorPhase: "));
+    switch (motorRt.phase) {
+      case MotorPhase::Stopped: replyLn(src, F("STOPPED")); break;
+      case MotorPhase::Kick: replyLn(src, F("KICK")); break;
+      case MotorPhase::Running: replyLn(src, F("RUNNING")); break;
+      case MotorPhase::NeutralWait: replyLn(src, F("NEUTRAL_WAIT")); break;
+      case MotorPhase::Fault: replyLn(src, F("FAULT")); break;
+      case MotorPhase::Brake: replyLn(src, F("BRAKE")); break;
+    }
+    replyFC(src, F("TargetRPM_Cmd: ")); replyLn(src, pidRt.targetRpmCmd);
+    replyFC(src, F("TargetRPM_Ramped: ")); replyLn(src, (int32_t)pidRt.targetRpmRamped);
+    replyFC(src, F("MeasuredRPM_Raw: ")); replyLn(src, (int32_t)pidRt.rawRpm);
+    replyFC(src, F("MeasuredRPM_Filtered: ")); replyLn(src, (int32_t)pidRt.filteredRpm);
+    float error = pidRt.targetRpmRamped - pidRt.filteredRpm;
+    replyFC(src, F("Error: ")); replyLn(src, (int32_t)error);
+    replyFC(src, F("Kp: ")); replyLn(src, pidRt.kp);
+    replyFC(src, F("Ki: ")); replyLn(src, pidRt.ki);
+    replyFC(src, F("Integral: ")); replyLn(src, (int32_t)pidRt.errorIntegral);
+    replyFC(src, F("BasePWM: ")); replyLn(src, (int32_t)pidRt.basePwm);
+    replyFC(src, F("PI_Output: ")); replyLn(src, (int32_t)pidRt.piOutput);
+    replyFC(src, F("FinalDuty: ")); replyLn(src, motorRt.targetDuty);
+    replyFC(src, F("AppliedDuty: ")); replyLn(src, motorRt.currentDuty);
+    replyFC(src, F("HallState: ")); replyLn(src, hallRt.stableRaw);
+    replyFC(src, F("HallPeriod_us: ")); replyLn(src, hallRt.hallPeriodUs);
+    replyFC(src, F("FaultCode: ")); replyLn(src, (uint8_t)motorRt.faultCode);
+    replyFC(src, F("BoostEdges: "));
+    replyLn(src, pidRt.hallEdgeCounter - pidRt.boostStartEdgeCount);
+    replyFC(src, F("BasePWM_L/M/H: "));
+    reply(src, pidRt.basePwmLow); replyFC(src, F("/"));
+    reply(src, pidRt.basePwmMid); replyFC(src, F("/"));
+    replyLn(src, pidRt.basePwmHigh);
+    replyFC(src, F("Boost_L/M/H/T: "));
+    reply(src, pidRt.boostLowPwm); replyFC(src, F("/"));
+    reply(src, pidRt.boostMidPwm); replyFC(src, F("/"));
+    reply(src, pidRt.boostHighPwm); replyFC(src, F("/"));
+    replyLn(src, pidRt.boostTimeMs);
+    replyFC(src, F("Ramp_Up/Down: "));
+    reply(src, (int32_t)pidRt.rampUpPerSec); replyFC(src, F("/"));
+    replyLn(src, (int32_t)pidRt.rampDownPerSec);
     return;
   }
 
@@ -2175,7 +2493,29 @@ void processControlCommand(char* cmd, CommandSource src) {
   }
 
   if (strcmp(cmd, "mode") == 0) {
-    replyLn(src, F("[INFO] Mode: CONTROL"));
+    replyFC(src, F("[INFO] Mode: CONTROL"));
+    replyFC(src, F(" SpeedCtrl="));
+    replyLn(src, pidRt.enabled ? F("SPEED") : F("DUTY"));
+    return;
+  }
+
+  if (strcmp(cmd, "mode duty") == 0) {
+    disablePidMode();
+    replyLn(src, F("[OK] Speed PI OFF (Duty mode)"));
+    return;
+  }
+
+  if (strcmp(cmd, "mode speed") == 0) {
+    pidRt.enabled = true;
+    pidRt.controlMode = SpeedControlMode::Speed;
+    resetPidState();
+    replyLn(src, F("[OK] Speed PI ON"));
+    return;
+  }
+
+  if (strcmp(cmd, "spstat") == 0) {
+    // processCommand'a yönlendir — spstat handler orada
+    processCommand(cmd, src);
     return;
   }
 
@@ -2209,6 +2549,18 @@ void processControlCommand(char* cmd, CommandSource src) {
     saveModeToStorage();
     replyLn(src, F("[OK] Mode=SETTINGS"));
     CMD.println(F("[MODE] SETTINGS"));
+    return;
+  }
+
+  // rpm komutu — speed mode RPM ayarı (Control modunda da çalışır)
+  if (startsWith(cmd, "rpm ")) {
+    processCommand(cmd, src);
+    return;
+  }
+
+  // spstat — speed PI durumu
+  if (strcmp(cmd, "spstat") == 0 || strcmp(cmd, "pidstatus") == 0) {
+    processCommand(cmd, src);
     return;
   }
 
@@ -2313,6 +2665,7 @@ void processControlCommand(char* cmd, CommandSource src) {
   // pwm <değer> — direkt PWM set
   long pv = 0;
   if (parseLongAfterPrefix(cmd, "pwm ", &pv)) {
+    if (pidRt.enabled) disablePidMode();
     controlPwmValue = (uint8_t)clampValue<long>(pv, 0, 255);
     if (controlDirection != 0) {
       pendingReq.hasTargetDutyUpdate = true;
@@ -2369,6 +2722,12 @@ void motorControlTick(uint32_t nowUs) {
 
   // Brake durumu - aktif fren, low-side ON, high-side OFF
   if (motorRt.phase == MotorPhase::Brake) {
+    // Brake timeout — süresiz brake'te kalmasın
+    if (brakeHoldMs > 0 && (uint32_t)(millis() - motorRt.phaseStartMs) >= brakeHoldMs) {
+      stopMotorImmediate();
+      CMD.println(F("[WARN] Brake timeout"));
+      return;
+    }
     allBrake();
     digitalWrite(LED_PIN, LOW);  // LED yanar (aktif durum)
     return;
@@ -2479,8 +2838,8 @@ void runMotorControlScheduler() {
 // ============================================================
 
 // Birleşik telemetri — Normal ve Control modda aynı format
-// Kompakt format: RPM:<measured>,T:<target>,D:<duty>,DIR:<F/R>,PH:<phase>,PID:<0/1>,BRAKE:<0/1>,FC:<code>,H:<hall>
-// Debug format:   RPM:<measured>,RF:<filtered>,T:<target>,ERR:<error>,OUT:<pid_out>,I:<integral>,D:<duty>,FC:<code>
+// Kompakt format: RPM:<measured>,T:<target>,D:<duty>,DIR:<F/R>,PH:<phase>,SP:<0/1>,BRAKE:<0/1>,FC:<code>,H:<hall>
+// Debug format:   RPM:<measured>,RF:<filtered>,Tcmd:<target>,Trmp:<ramped>,ERR:<error>,OUT:<pi_out>,I:<integral>,D:<duty>,FC:<code>
 void sendTelemetry(uint32_t nowMs) {
   if ((uint32_t)(nowMs - lastTelemetryMs) < telemetryIntervalMs) return;
   lastTelemetryMs = nowMs;
@@ -2488,32 +2847,36 @@ void sendTelemetry(uint32_t nowMs) {
   uint32_t rpm = calculateRPM();
 
   if (telemetryDebug && pidRt.enabled) {
-    // Detaylı PID telemetri (debug modu)
-    float targetAbs = (float)abs(pidRt.targetRpm);
-    float error = targetAbs - pidRt.filteredRpm;
-    float pidOut = pidRt.kp * error + pidRt.ki * pidRt.errorIntegral;
+    // Detaylı Speed PI telemetri (debug modu)
+    float targetAbs = (float)abs(pidRt.targetRpmCmd);
+    float error = pidRt.targetRpmRamped - pidRt.filteredRpm;
+    float piOut = pidRt.kp * error + pidRt.ki * pidRt.errorIntegral;
 
     CMD.print(F("RPM:"));
     CMD.print(rpm);
     CMD.print(F(",RF:"));
     CMD.print((int32_t)pidRt.filteredRpm);
-    CMD.print(F(",T:"));
-    CMD.print(pidRt.targetRpm);
+    CMD.print(F(",Tcmd:"));
+    CMD.print(pidRt.targetRpmCmd);
+    CMD.print(F(",Trmp:"));
+    CMD.print((int32_t)pidRt.targetRpmRamped);
     CMD.print(F(",ERR:"));
     CMD.print((int32_t)error);
     CMD.print(F(",OUT:"));
-    CMD.print((int32_t)pidOut);
+    CMD.print((int32_t)piOut);
     CMD.print(F(",I:"));
     CMD.print((int32_t)pidRt.errorIntegral);
     CMD.print(F(",D:"));
     CMD.print(motorRt.currentDuty);
+    CMD.print(F(",PH:"));
+    CMD.print((uint8_t)pidRt.speedPhase);
     CMD.print(F(",FC:"));
     CMD.println((uint8_t)motorRt.faultCode);
     return;
   }
 
   // Kompakt telemetri (varsayılan)
-  uint32_t target = pidRt.enabled ? (uint32_t)abs(pidRt.targetRpm) : 0;
+  uint32_t target = pidRt.enabled ? (uint32_t)abs(pidRt.targetRpmCmd) : 0;
 
   CMD.print(F("RPM:"));
   CMD.print(rpm);
@@ -2529,7 +2892,7 @@ void sendTelemetry(uint32_t nowMs) {
   CMD.print(dirChar);
   CMD.print(F(",PH:"));
   CMD.print((uint8_t)motorRt.phase);
-  CMD.print(F(",PID:"));
+  CMD.print(F(",SP:"));
   CMD.print(pidRt.enabled ? 1 : 0);
   CMD.print(F(",BRAKE:"));
   CMD.print(motorRt.phase == MotorPhase::Brake ? 1 : 0);
@@ -2541,7 +2904,7 @@ void sendTelemetry(uint32_t nowMs) {
 
 // Komut watchdog — belirli süre komut gelmezse motor durdur (güvenlik)
 void checkCommandWatchdog(uint32_t nowMs) {
-  if (!isMotorDriveActive()) return;
+  if (!isMotorBusy()) return;
   if (lastMotorCommandMs == 0) return;
 
   if ((uint32_t)(nowMs - lastMotorCommandMs) > CMD_WATCHDOG_MS) {
@@ -2556,7 +2919,7 @@ void checkCommandWatchdog(uint32_t nowMs) {
 // Host connection monitor — 2sn UART aktivite yoksa motor durdur
 static constexpr uint32_t HOST_DISCONNECT_TIMEOUT_MS = 2000;
 void checkHostConnection(uint32_t nowMs) {
-  if (!isMotorDriveActive()) return;
+  if (!isMotorBusy()) return;
   if (isServiceActive()) return;  // service task sırasında atla (identify vb.)
   if (lastUartActivityMs == 0) return;
 
@@ -2674,8 +3037,8 @@ void loop() {
   // Motor her zaman önce — mod fark etmez, motor sürücü çalışır
   runMotorControlScheduler();
 
-  // PID RPM kontrol döngüsü — 50Hz (20ms)
-  runPidControlLoop(nowMs);
+  // Speed PI kontrol döngüsü — 50Hz (20ms)
+  runSpeedControlLoop(nowMs);
 
   // RX toplama
   if (Serial.available()) {

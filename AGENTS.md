@@ -34,7 +34,7 @@ Not: Upload protocol = ST-Link (platformio.ini). LSP hataları (Arduino.h not fo
 ## Proje Yapısı
 
 ```
-src/main.cpp              — tüm firmware (2324 satır, tek dosya)
+src/main.cpp              — tüm firmware (~2800 satır, tek dosya)
 tools/wasd_controller.py  — Python host (f/b/s UI)
 docs/README.md            — proje dokümantasyonu
 docs/ARCHITECTURE.md      — teknik mimari
@@ -96,7 +96,7 @@ Lease: Her hareket komutu zaman damgasını yeniler. 800ms komut gelmezse motor 
 ### Telemetri Formatı
 
 ```
-RPM:0,D:0,DIR:F,PH:2,PWM_SET:150,PWM_ACT:0,BRAKE:0,FC:0,H:3
+RPM:0,D:0,DIR:F,PH:2,SP:0,BRAKE:0,FC:0,H:3
 ```
 
 | Field | Açıklama |
@@ -105,8 +105,7 @@ RPM:0,D:0,DIR:F,PH:2,PWM_SET:150,PWM_ACT:0,BRAKE:0,FC:0,H:3
 | D | Anlık duty cycle |
 | DIR | Yön (F/R) |
 | PH | Faz (0-5): Stopped, Kick, Running, NeutralWait, Fault, Braking |
-| PWM_SET | Host tarafından ayarlanan PWM hedefi |
-| PWM_ACT | Firmware'ın uyguladığı gerçek PWM |
+| SP | Speed PI modu aktif mi (0/1) |
 | BRAKE | Brake aktif mi (0/1) |
 | FC | Fault kodu (0=None) |
 | H | Ham Hall değeri (0-7) |
@@ -145,7 +144,14 @@ Faz sırası: Stabilize → f/b/s → Lease → Brake → ~~Test~~ → Cleanup (
 
 ## CLI Komutları (Normal Mod)
 
-f/forward, b/backward, s/stop, pwm, kick on/off, ramp on/off, kickduty, kickms, ramprate, rampms, savecfg, loadcfg, defaults, saveall, hall, map, save, reload, mapreset, scan, test, identify, status, debug on/off, clrerr, mode, mode python/settings/normal
+### Duty Mode Komutları
+f/forward, b/backward, s/stop, x/brake, pwm, kick on/off, ramp on/off, kickduty, kickms, ramprate, rampms, defpwm, savecfg, loadcfg, defaults, saveall, hall, map, save, reload, mapreset, scan, test, identify, status, debug on/off, clrerr, mode
+
+### Speed PI Komutları
+mode duty, mode speed, rpm, kp, ki, pi, base, boost, ramp, spstat, pidstatus
+
+### Mod Değiştirme
+mode duty (manuel PWM), mode speed (RPM PI kontrol), mode control (WASD), mode settings (temiz monitör), mode normal (CLI+telemetri)
 
 ---
 
@@ -162,9 +168,11 @@ UART: PA2(TX), PA3(RX)
 
 ## Hızlı Referans
 
-Tek dosya: src/main.cpp (2324 satır)
-Modlar: Normal/Python/Settings
+Tek dosya: src/main.cpp (~2800 satır)
+Modlar: Normal/Control/Settings
+Kontrol Modu: Duty (manuel PWM) / Speed (RPM PI)
 Protokol: f/b/s
+Speed PI: Kp=0.80, Ki=0.10, base PWM, start boost, RPM ramp
 Watchdog: 800ms, tüm modlarda aktif
 EEPROM: Hall map(addr 0), config(addr 64), mod(addr 128)
 Motor tick: 60µs

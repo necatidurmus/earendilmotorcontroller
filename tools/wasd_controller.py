@@ -46,6 +46,7 @@ DEFAULT_PORT = "/dev/ttyUSB0"
 DEFAULT_BAUD = 115200
 
 PWM_STEP = 10
+RPM_STEP = 10
 RPM_MAX_DISPLAY = 2000  # RPM bar max değeri
 
 
@@ -65,10 +66,18 @@ class MotorController:
         self.dir_str = "-"
         self.phase = 0
         self.phase_name = "STOPPED"
+        self.brake_active = False
+        self.fault_code = 0
+        self.raw_hall = 0
 
         self.running = True
         self.mode_confirmed = False
-        self.current_mode = "NORMAL"  # "NORMAL" | "CONTROL" | "SETTINGS"
+        self.current_mode = "NORMAL"  # "NORMAL" | "CONTROL" | "SPEED" | "SETTINGS"
+
+        # Speed PI modu
+        self.speed_mode = False
+        self.target_rpm = 0
+        self.speed_pi_active = False  # firmware SP field
 
         # Hold-to-run (gerçek key-release değil, timeout bazlı polling)
         # curses nodelay modunda tuş bırakma eventi yok, bu yüzden
@@ -105,6 +114,41 @@ class MotorController:
                     self.current_mode = "CONTROL"
         except Exception:
             pass
+
+    def activate_speed_mode(self):
+        """Firmware'da Speed PI modunu aktifleştir"""
+        self.send_command("mode speed")
+        time.sleep(0.3)
+        confirmed = False
+        try:
+            while self.ser.in_waiting > 0:
+                line = self.ser.readline().decode("utf-8", errors="ignore").strip()
+                if "[MODE]" in line and ("SPEED" in line or "speed" in line):
+                    confirmed = True
+                elif "OK" in line or "mode" in line.lower():
+                    confirmed = True
+        except Exception:
+            pass
+        self.speed_mode = confirmed
+        self.current_mode = "SPEED" if confirmed else self.current_mode
+        self.mode_confirmed = confirmed
+        return confirmed
+
+    def deactivate_speed_mode(self):
+        """Speed modundan çık, duty moduna dön"""
+        self.send_command("rpm 0")
+        time.sleep(0.05)
+        self.send_command("mode duty")
+        time.sleep(0.1)
+        self.speed_mode = False
+        self.target_rpm = 0
+        self.current_mode = "CONTROL"
+        self.direction = 0
+
+    def set_rpm(self, rpm):
+        """RPM hedefi gönder (signed: +ileri, -geri)"""
+        self.target_rpm = rpm
+        self.send_command(f"rpm {rpm}")
 
     def restore_normal_mode(self):
         """Çıkışta normal moda dön"""
@@ -143,6 +187,16 @@ class MotorController:
         self.pwm_set = max(0, self.pwm_set - PWM_STEP)
         self.send_command(f"pwm {self.pwm_set}")
 
+    def rpm_up(self):
+        """W — RPM hedefi artır"""
+        self.target_rpm = min(1000, self.target_rpm + RPM_STEP)
+        self.send_command(f"rpm {self.target_rpm}")
+
+    def rpm_down(self):
+        """X — RPM hedefi azalt"""
+        self.target_rpm = max(-1000, self.target_rpm - RPM_STEP)
+        self.send_command(f"rpm {self.target_rpm}")
+
     def set_key(self, key):
         """Hold-to-run: F/B basıldığında çağrılır. None = bırakıldı."""
         self.key_held = key
@@ -150,11 +204,14 @@ class MotorController:
             self.send_command(key)
 
     def _sender_loop(self):
-        """Heartbeat: Control modunda ve key_held aktifken 0.5s'de bir komut tekrar gönder.
-        Sadece mode_confirmed=True ve CONTROL modundayken çalışır (güvenlik)."""
+        """Heartbeat: Speed modunda rpm hedefi, Control modunda hold-to-run."""
         while self.running:
-            # Güvenlik: Sadece CONTROL modunda ve onaylanmışsa heartbeat gönder
-            if (
+            # Speed modunda RPM heartbeat (target_rpm=0 olsa bile)
+            if self.speed_mode:
+                self.send_command(f"rpm {self.target_rpm}")
+                time.sleep(0.5)
+            # Control modunda hold-to-run heartbeat
+            elif (
                 self.current_mode == "CONTROL"
                 and self.mode_confirmed
                 and self.key_held in ("f", "b")
@@ -221,7 +278,7 @@ class MotorController:
             pass
 
     def _parse_telemetry(self, line):
-        """RPM:0,D:0,DIR:F,PH:0,PWM_SET:60,PWM_ACT:0,PWM:60,PDIR:0"""
+        """RPM:0,D:0,DIR:F,PH:2,SP:0,BRAKE:0,FC:0,H:3"""
         try:
             for part in line.split(","):
                 if ":" not in part:
@@ -245,6 +302,14 @@ class MotorController:
                         "BRAKE",
                     ]
                     self.phase_name = phases[ph] if ph < len(phases) else "?"
+                elif key == "SP":
+                    self.speed_pi_active = (int(val) == 1)
+                elif key == "BRAKE":
+                    self.brake_active = (int(val) == 1)
+                elif key == "FC":
+                    self.fault_code = int(val)
+                elif key == "H":
+                    self.raw_hall = int(val)
                 elif key == "PWM_SET":
                     self.pwm_set = int(val)
                 elif key == "PWM_ACT":
@@ -256,18 +321,27 @@ class MotorController:
                 elif key == "PDIR":
                     self.fw_direction = int(val)
                     self.direction = self.fw_direction
+                elif key == "SP":
+                    self.speed_pi_active = (int(val) == 1)
         except (ValueError, IndexError):
             pass
 
     def close(self):
         """Güvenli kapanış: önce motoru durdur, sonra normal moda dön."""
-        self.key_held = None  # Heartbeat'ı durdur
+        self.key_held = None
         self.running = False
         try:
-            # Önce motoru durdur (coast)
-            self.stop()
-            time.sleep(0.05)
-            # Sonra normal moda dön
+            if self.speed_mode:
+                self.send_command("rpm 0")
+                time.sleep(0.05)
+                self.send_command("mode duty")
+                time.sleep(0.05)
+                self.speed_mode = False
+            self.restore_normal_mode()
+            time.sleep(0.1)
+            self.ser.close()
+        except Exception:
+            pass
             self.restore_normal_mode()
             time.sleep(0.1)
             self.ser.close()
@@ -325,7 +399,9 @@ def draw_ui(stdscr, ctrl, port):
         # Bağlantı durumu
         stdscr.addstr(1, 2, f"Port: {port}", CYAN)
         col = 2 + len(f"Port: {port}") + 2
-        if ctrl.mode_confirmed:
+        if ctrl.speed_mode:
+            stdscr.addstr(1, col, " SPEED PI ", curses.color_pair(6) | curses.A_BOLD)
+        elif ctrl.mode_confirmed:
             stdscr.addstr(1, col, " CONTROL ", STATUS_OK)
         else:
             stdscr.addstr(1, col, " BEKLE.. ", STATUS_ERR)
@@ -348,35 +424,53 @@ def draw_ui(stdscr, ctrl, port):
         stdscr.addstr(7, 8, "Çıkış")
         stdscr.addstr(7, 28, "[I]", CYAN | curses.A_BOLD)
         stdscr.addstr(7, 32, "Identify")
+        stdscr.addstr(8, 4, "[R]", CYAN | curses.A_BOLD)
+        stdscr.addstr(8, 8, "Speed PI modu")
+        stdscr.addstr(8, 28, "[T]", CYAN | curses.A_BOLD)
+        stdscr.addstr(8, 32, "Duty modu")
 
         # ═══ RPM Göstergesi ═══
-        stdscr.addstr(8, 2, "── RPM ──", curses.A_BOLD | curses.A_DIM)
+        stdscr.addstr(9, 2, "── RPM ──", curses.A_BOLD | curses.A_DIM)
 
         rpm_color = GREEN if ctrl.rpm > 0 else CYAN
-        stdscr.addstr(9, 2, "RPM:", curses.A_BOLD)
-        stdscr.addstr(9, 7, f"{ctrl.rpm:5d}", rpm_color | curses.A_BOLD)
+        stdscr.addstr(10, 2, "RPM:", curses.A_BOLD)
+        stdscr.addstr(10, 7, f"{ctrl.rpm:5d}", rpm_color | curses.A_BOLD)
+
+        # Speed modunda hedef RPM
+        if ctrl.speed_mode:
+            stdscr.addstr(10, 14, "Hedef:", curses.A_BOLD)
+            target_color = GREEN if ctrl.target_rpm > 0 else (RED if ctrl.target_rpm < 0 else CYAN)
+            stdscr.addstr(10, 21, f"{ctrl.target_rpm:5d}", target_color | curses.A_BOLD)
+
+            # W/S RPM kontrolleri
+            stdscr.addstr(11, 4, "[W]", YELLOW | curses.A_BOLD)
+            stdscr.addstr(11, 8, "RPM +10")
+            stdscr.addstr(11, 24, "[X]", YELLOW | curses.A_BOLD)
+            stdscr.addstr(11, 28, "RPM -10")
 
         # RPM bar
         bar_len = min(30, w - 18)
         if bar_len > 0:
-            stdscr.addstr(9, 14, "[")
+            bar_row = 12 if ctrl.speed_mode else 11
+            stdscr.addstr(bar_row, 2, "[")
             draw_bar(
-                stdscr, 9, 15, ctrl.rpm, RPM_MAX_DISPLAY, bar_len, GREEN, curses.A_DIM
+                stdscr, bar_row, 3, ctrl.rpm, RPM_MAX_DISPLAY, bar_len, GREEN, curses.A_DIM
             )
-            stdscr.addstr(9, 15 + bar_len, "]")
+            stdscr.addstr(bar_row, 3 + bar_len, "]")
 
         # ═══ Yön & Durum ═══
-        stdscr.addstr(11, 2, "── Motor ──", curses.A_BOLD | curses.A_DIM)
+        motor_row = 14 if ctrl.speed_mode else 13
+        stdscr.addstr(motor_row, 2, "── Motor ──", curses.A_BOLD | curses.A_DIM)
 
-        stdscr.addstr(12, 2, "Yön: ", curses.A_BOLD)
+        stdscr.addstr(motor_row + 1, 2, "Yön: ", curses.A_BOLD)
         if ctrl.direction == 1:
-            stdscr.addstr(12, 7, "▶▶▶ İLERİ ▶▶▶", GREEN | curses.A_BOLD)
+            stdscr.addstr(motor_row + 1, 7, "▶▶▶ İLERİ ▶▶▶", GREEN | curses.A_BOLD)
         elif ctrl.direction == -1:
-            stdscr.addstr(12, 7, "◀◀◀ GERİ  ◀◀◀", RED | curses.A_BOLD)
+            stdscr.addstr(motor_row + 1, 7, "◀◀◀ GERİ  ◀◀◀", RED | curses.A_BOLD)
         else:
-            stdscr.addstr(12, 7, "─── DURDU ───", YELLOW)
+            stdscr.addstr(motor_row + 1, 7, "─── DURDU ───", YELLOW)
 
-        stdscr.addstr(13, 2, "Faz: ", curses.A_BOLD)
+        stdscr.addstr(motor_row + 2, 2, "Faz: ", curses.A_BOLD)
         ph_color = (
             GREEN
             if ctrl.phase_name == "RUNNING"
@@ -390,36 +484,38 @@ def draw_ui(stdscr, ctrl, port):
                 )
             )
         )
-        stdscr.addstr(13, 7, ctrl.phase_name, ph_color | curses.A_BOLD)
+        stdscr.addstr(motor_row + 2, 7, ctrl.phase_name, ph_color | curses.A_BOLD)
 
         # ═══ Hız (PWM) Kontrolü ═══
-        stdscr.addstr(15, 2, "── Hız (PWM) ──", curses.A_BOLD | curses.A_DIM)
+        pwm_row = motor_row + 4
+        stdscr.addstr(pwm_row, 2, "── Hız (PWM) ──", curses.A_BOLD | curses.A_DIM)
 
-        stdscr.addstr(16, 2, "Set: ", curses.A_BOLD)
-        stdscr.addstr(16, 7, f"{ctrl.pwm_set:3d}", CYAN | curses.A_BOLD)
-        stdscr.addstr(16, 10, " /255")
+        stdscr.addstr(pwm_row + 1, 2, "Set: ", curses.A_BOLD)
+        stdscr.addstr(pwm_row + 1, 7, f"{ctrl.pwm_set:3d}", CYAN | curses.A_BOLD)
+        stdscr.addstr(pwm_row + 1, 10, " /255")
 
-        stdscr.addstr(17, 2, "Aktif:", curses.A_BOLD)
-        stdscr.addstr(17, 8, f"{ctrl.pwm_act:3d}", YELLOW | curses.A_BOLD)
-        stdscr.addstr(17, 11, " /255")
+        stdscr.addstr(pwm_row + 2, 2, "Aktif:", curses.A_BOLD)
+        stdscr.addstr(pwm_row + 2, 8, f"{ctrl.pwm_act:3d}", YELLOW | curses.A_BOLD)
+        stdscr.addstr(pwm_row + 2, 11, " /255")
 
         # PWM bar
         if bar_len > 0:
             pct = ctrl.pwm_set / 255.0
-            stdscr.addstr(18, 2, "[")
-            draw_bar(stdscr, 18, 3, ctrl.pwm_set, 255, bar_len, YELLOW, curses.A_DIM)
-            stdscr.addstr(18, 3 + bar_len, f"] {int(pct * 100):3d}%")
+            stdscr.addstr(pwm_row + 3, 2, "[")
+            draw_bar(stdscr, pwm_row + 3, 3, ctrl.pwm_set, 255, bar_len, YELLOW, curses.A_DIM)
+            stdscr.addstr(pwm_row + 3, 3 + bar_len, f"] {int(pct * 100):3d}%")
 
         # ═══ İstatistik ═══
+        stats_row = pwm_row + 5
         stdscr.addstr(
-            20, 2, f"Cmd:{ctrl.cmd_count}  Tel:{ctrl.telem_count}", curses.A_DIM
+            stats_row, 2, f"Cmd:{ctrl.cmd_count}  Tel:{ctrl.telem_count}", curses.A_DIM
         )
 
         if ctrl.error_msg:
-            stdscr.addstr(21, 2, f"⚠ {ctrl.error_msg}", RED | curses.A_BOLD)
+            stdscr.addstr(stats_row + 1, 2, f"⚠ {ctrl.error_msg}", RED | curses.A_BOLD)
         elif ctrl.last_response:
             msg = ctrl.last_response[: min(w - 8, 45)]
-            stdscr.addstr(21, 2, f"Son: {msg}", curses.A_DIM)
+            stdscr.addstr(stats_row + 1, 2, f"Son: {msg}", curses.A_DIM)
 
         stdscr.refresh()
 
@@ -472,32 +568,56 @@ def main(stdscr):
 
             if key == ord("q") or key == ord("Q"):
                 break
+            elif key == ord("r") or key == ord("R"):
+                if not ctrl.speed_mode:
+                    ctrl.activate_speed_mode()
+            elif key == ord("t") or key == ord("T"):
+                if ctrl.speed_mode:
+                    ctrl.deactivate_speed_mode()
+            elif key == ord("w") or key == ord("W"):
+                if ctrl.speed_mode:
+                    ctrl.rpm_up()
+                else:
+                    ctrl.set_key("f")
+                    ctrl._no_key_count = 0
+            elif key == ord("x") or key == ord("X"):
+                if ctrl.speed_mode:
+                    ctrl.rpm_down()
             elif key == ord("f") or key == ord("F"):
-                ctrl.set_key("f")
-                ctrl._no_key_count = 0
+                if not ctrl.speed_mode:
+                    ctrl.set_key("f")
+                    ctrl._no_key_count = 0
             elif key == ord("b") or key == ord("B"):
-                ctrl.set_key("b")
-                ctrl._no_key_count = 0
+                if not ctrl.speed_mode:
+                    ctrl.set_key("b")
+                    ctrl._no_key_count = 0
             elif key == ord("d") or key == ord("D") or key == curses.KEY_UP:
-                ctrl.pwm_up()
+                if not ctrl.speed_mode:
+                    ctrl.pwm_up()
             elif key == ord("a") or key == ord("A") or key == curses.KEY_DOWN:
-                ctrl.pwm_down()
+                if not ctrl.speed_mode:
+                    ctrl.pwm_down()
             elif key == ord("s") or key == ord("S"):
                 ctrl.set_key(None)
-                ctrl.stop()
+                if ctrl.speed_mode:
+                    ctrl.set_rpm(0)
+                else:
+                    ctrl.stop()
             elif key == ord(" "):
                 ctrl.set_key(None)
                 ctrl.brake()
             elif key == ord("i") or key == ord("I"):
                 ctrl.send_command("identify")
             elif key == -1:
-                # No key pressed — grace period: 3 consecutive (~240ms) before stop
-                if ctrl.key_held is not None:
+                # No key pressed — Speed modunda key_held sıfırla
+                if ctrl.speed_mode:
+                    ctrl.key_held = None
+                    ctrl._no_key_count = 0
+                elif ctrl.key_held is not None:
                     ctrl._no_key_count += 1
                     if ctrl._no_key_count >= 3:
                         ctrl.set_key(None)
                         ctrl.stop()
-                        ctrl._no_key_count = 0
                 else:
                     ctrl._no_key_count = 0
 
