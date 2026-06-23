@@ -1,0 +1,285 @@
+# ======================================================================
+# STM32CubeMX Project Configuration file
+# Project: f411-motor-cube
+# MCU: STM32F411CEUx (Black Pill F411CE)
+# Toolchain / IDE: STM32CubeIDE / PlatformIO (framework=stm32cube)
+# ----------------------------------------------------------------------
+# This file is the source of truth for CubeMX-driven peripheral
+# configuration. Open it in STM32CubeMX to edit / regenerate code.
+#
+# ISSUE-D cleanup: removed TIM6 (F411 has no TIM6/TIM7 basic timers),
+# removed invalid F411 RCC fields (Ethernet, LCDTFT, PLLSAI2/3,
+# HCLK3/4, RGMIIClk, QSPI, SAI, SPDIFRX, SDIO, USB, VCO3),
+# removed TIM6_DAC_IRQn from NVIC.
+# ======================================================================
+
+# ---------- MCU selection ----------
+Mcu.Family=STM32F4
+Mcu.IP0=CORTEX_M4
+Mcu.IP1=NVIC
+Mcu.IP2=RCC
+Mcu.IP3=SYS
+Mcu.IP4=TIM1
+Mcu.IP5=TIM2
+Mcu.IP6=TIM4
+Mcu.IP7=USART2
+Mcu.IP8=GPIO
+Mcu.IPNb=9
+Mcu.Name=STM32F411CEUx
+Mcu.Package=LQFP48
+Mcu.Pin0=PA8
+Mcu.Pin1=PA9
+Mcu.Pin10=PA3
+Mcu.Pin11=PA2
+Mcu.Pin12=PA7
+Mcu.Pin13=PB0
+Mcu.Pin14=PB1
+Mcu.Pin15=VBAT
+Mcu.Pin16=PC13
+Mcu.Pin17=PC14-OSC32_IN
+Mcu.Pin18=PC15-OSC32_OUT
+Mcu.Pin19=PH0-OSC_IN
+Mcu.Pin20=PH1-OSC_OUT
+Mcu.Pin21=PB6
+Mcu.Pin22=PB7
+Mcu.Pin23=PB8
+Mcu.Pin3=PA10
+Mcu.Pin4=PA13
+Mcu.Pin5=PA14
+Mcu.Pin6=PA15
+Mcu.Pin7=PB3
+Mcu.Pin8=PB4
+Mcu.Pin9=PB5
+Mcu.PinsNb=24
+Mcu.ThirdPartyNb=0
+Mcu.UserConstants=
+Mcu.UserName=STM32F411CEUx
+
+# ---------- Project / code generation ----------
+ProjectManager.AskForMigrate=true
+ProjectManager.BackupPrevious=false
+ProjectManager.CompilerLinker=GCC
+ProjectManager.CompilerOptimize=3
+ProjectManager.ComToolID=
+ProjectManager.Counter=
+ProjectManager.CustomerFirmwarePackage=
+ProjectManager.DefaultFWLocation=true
+ProjectManager.DeletePrevious=true
+ProjectManager.DeviceId=STM32F411CEUx
+ProjectManager.FirmwarePackage=STM32Cube FW_F4 V1.28.0
+ProjectManager.FreeRTOS=false
+ProjectManager.FwPackage=STM32Cube FW_F4 V1.28.0
+ProjectManager.HalAssertCode=false
+ProjectManager.HeapSize=0x200
+ProjectManager.KeepUserCode=true
+ProjectManager.LastFirmware=true
+ProjectManager.LibraryCopy=1
+ProjectManager.MainLocation=Core/Src
+ProjectManager.NoMain=false
+ProjectManager.PreviousToolchain=
+ProjectManager.ProjectBuild=false
+ProjectManager.ProjectFileName=f411-motor-cube.ioc
+ProjectManager.ProjectName=f411-motor-cube
+ProjectManager.ProjectStructure=true
+ProjectManager.RegisterCallBack=
+ProjectManager.StackSize=0x400
+ProjectManager.TargetLanguage=C
+ProjectManager.ToolchainLocation=
+ProjectManager.UAScriptAfterPath=
+ProjectManager.UAScriptBeforePath=
+ProjectManager.UnderRoot=false
+ProjectManager.functionlistsort=1-SystemClock_Config-RCC-false-HAL-true-false,2-MX_GPIO_Init-GPIO-false-HAL-true-false,3-MX_TIM1_Init-TIM1-false-HAL-true-false,4-MX_TIM2_Init-TIM2-false-HAL-true-false,5-MX_TIM4_Init-TIM4-false-HAL-true-false,6-MX_USART2_UART_Init-USART2-false-HAL-true-false,0-MX_CORTEX_M4_Init-CORTEX_M4-false-HAL-true-false
+
+# ---------- RCC / clocks ----------
+# HSE 8 MHz crystal, PLL to 96 MHz SYSCLK
+# APB1 = 48 MHz (USART2, TIM2/TIM4 timer clock = 96 MHz)
+# APB2 = 96 MHz (TIM1 timer clock = 96 MHz)
+RCC.AHBCLKDivider=RCC_SYSCLK_DIV1
+RCC.APB1CLKDivider=RCC_HCLK_DIV2
+RCC.APB1TimFreq_Value=96000000
+RCC.APB2CLKDivider=RCC_HCLK_DIV1
+RCC.APB2TimFreq_Value=96000000
+RCC.CortexFreq_Value=96000000
+RCC.FCLKCortexFreq_Value=96000000
+RCC.FamilyName=M
+RCC.HCLKFreq_Value=96000000
+RCC.HPRE=RCC_SYSCLK_DIV1
+RCC.I2SClocksFreq_Value=96000000
+RCC.IPParameters=AHBCLKDivider,APB1CLKDivider,APB1TimFreq_Value,APB2CLKDivider,APB2TimFreq_Value,CortexFreq_Value,FCLKCortexFreq_Value,FamilyName,HCLKFreq_Value,HPRE,I2SClocksFreq_Value,LSE_Drive,LSE_VALUE,MCO2PinFreq_Value,MCOPinFreq_Value,PLL48CLKFreq_Value,PLLCLKFreq_Value,PLLM,PLLN,PLLP,PLLQ,PLLVCOMaxFreq,PLLVCOInputFreq,PLLVCOOutputFreq,PWRFreq_Value,RCC_48MHZ_HSI48,RTCCLKSelection,RTCFreq_Value,SYSCLKFreq_VALUE,SYSCLKSource,TimSysFreq_Value
+RCC.LSE_Drive=RCC_LSEDRIVE_LOW
+RCC.LSE_VALUE=32768
+RCC.MCO2PinFreq_Value=96000000
+RCC.MCOPinFreq_Value=96000000
+RCC.PLL48CLKFreq_Value=96000000
+RCC.PLLCLKFreq_Value=96000000
+RCC.PLLM=8
+RCC.PLLN=192
+RCC.PLLP=RCC_PLLP_DIV2
+RCC.PLLQ=4
+RCC.PLLVCOMaxFreq=336000000
+RCC.PLLVCOInputFreq=8000000
+RCC.PLLVCOOutputFreq=192000000
+RCC.PWRFreq_Value=96000000
+RCC.RCC_48MHZ_HSI48=48000000
+RCC.RTCCLKSelection=RCC_RTCCLKSOURCE_LSE
+RCC.RTCFreq_Value=32768
+RCC.SYSCLKFreq_VALUE=96000000
+RCC.SYSCLKSource=RCC_SYSCLKSOURCE_PLLCLK
+RCC.TimSysFreq_Value=96000000
+
+# ---------- USART2 (command UART) ----------
+USART2.BaudRate=115200
+USART2.IPParameters=VirtualMode-Asynchronous,BaudRate,Mode,Parity,WordLength,StopBits
+USART2.Mode=MODE_TX|RX
+USART2.Parity=PARITY_NONE
+USART2.StopBits=STOPBITS_1
+USART2.VirtualMode-Asynchronous=VM_ASYNC
+USART2.WordLength=WORDLENGTH_8B
+
+# ---------- TIM1 — advanced-control motor PWM ----------
+# 96 MHz clock, edge-aligned upcounting, ARR=4799 -> 20.0 kHz PWM.
+#   f_pwm = TIM_CLK / (ARR + 1) = 96 MHz / 4800 = 20 kHz
+# Dead-time DTG=63 (~0.66 us @ 96 MHz, NOT bench-verified).
+# Break input DISABLED in Core/Src/tim.c — no BKIN pin is wired on
+#   the board, so an enabled break with a floating BKIN line could
+#   keep MOE off.  BreakPolarity/BreakFilter below are placeholders
+#   only; do not re-enable break without configuring a physical BKIN
+#   pin tied to a safe inactive level (see docs/KNOWN_RISKS.md).
+TIM1.AutoReloadPreload=TIM_AUTORELOAD_PRELOAD_ENABLE
+TIM1.Break2Filter=TIM_BREAK2FILTER_FDIV1
+TIM1.Break2Polarity=TIM_BREAK2POLARITY_HIGH
+TIM1.BreakFilter=TIM_BREAKFILTER_FDIV1
+TIM1.BreakPolarity=TIM_BREAKPOLARITY_HIGH
+TIM1.Channel-PWM\ Generation1\ CH1=ENABLE
+TIM1.Channel-PWM\ Generation1\ CH1N=ENABLE
+TIM1.Channel-PWM\ Generation1\ CH2=ENABLE
+TIM1.Channel-PWM\ Generation1\ CH2N=ENABLE
+TIM1.Channel-PWM\ Generation1\ CH3=ENABLE
+TIM1.Channel-PWM\ Generation1\ CH3N=ENABLE
+TIM1.CounterMode=TIM_COUNTERMODE_UP
+TIM1.DeadTime=63
+TIM1.IPParameters=Channel-PWM Generation1 CH1,Channel-PWM Generation1 CH1N,Channel-PWM Generation1 CH2,Channel-PWM Generation1 CH2N,Channel-PWM Generation1 CH3,Channel-PWM Generation1 CH3N,AutoReloadPreload,Break2Filter,Break2Polarity,BreakFilter,BreakPolarity,CounterMode,DeadTime,OffStateIDLE,OffStateRun,OutputCompare-PWM Generation1 No Output1,OutputCompare-PWM Generation1 No Output1N,OutputCompare-PWM Generation1 No Output2,OutputCompare-PWM Generation1 No Output2N,OutputCompare-PWM Generation1 No Output3,OutputCompare-PWM Generation1 No Output3N,Period,Prescaler,Pulse,RepetitionCounter,TIM_MasterSlaveMode,TIM_OCMode_PWM1
+TIM1.OffStateIDLE=DISABLE
+TIM1.OffStateRun=DISABLE
+TIM1.OutputCompare-PWM\ Generation1\ No\ Output1=PWM
+TIM1.OutputCompare-PWM\ Generation1\ No\ Output1N=PWM
+TIM1.OutputCompare-PWM\ Generation1\ No\ Output2=PWM
+TIM1.OutputCompare-PWM\ Generation1\ No\ Output2N=PWM
+TIM1.OutputCompare-PWM\ Generation1\ No\ Output3=PWM
+TIM1.OutputCompare-PWM\ Generation1\ No\ Output3N=PWM
+TIM1.Period=4799
+TIM1.Prescaler=0
+TIM1.Pulse=0
+TIM1.RepetitionCounter=0
+TIM1.TIM_MasterSlaveMode=TIM_MASTERSLAVEMODE_DISABLE
+TIM1.TIM_OCMode_PWM1=TIM_OCMODE_PWM1
+
+# ---------- TIM2 — 32-bit 1 MHz microsecond timestamp ----------
+# Free-running, no pins.  APB1 timer clock = 96 MHz, prescaler 95 -> 1 MHz.
+# Used by hall_sensor.c for Hall edge timestamps / RPM period.
+TIM2.IPParameters=Prescaler,Period
+TIM2.Prescaler=95
+TIM2.Period=4294967295
+
+# ---------- TIM4 — Hall sensor interface (placeholder) ----------
+# Kept for .ioc consistency. Runtime uses EXTI on PB6/PB7/PB8 + TIM2
+# timestamps (see hall_sensor.c). TIM4 is initialised but not used
+# for RPM measurement.
+# 96 MHz / Prescaler 95 = 1 MHz timer clock
+TIM4.IPParameters=Prescaler,TIM_MasterSlaveMode,TIM4_CounterMode
+TIM4.Prescaler=95
+TIM4.TIM4_CounterMode=TIM_COUNTERMODE_UP
+TIM4.TIM_MasterSlaveMode=TIM_MASTERSLAVEMODE_DISABLE
+
+# ---------- NVIC priorities ----------
+# Note: TIM6_DAC_IRQn removed — STM32F411 has no TIM6/TIM7.
+# Scheduler tick is SysTick (HAL_IncTick), not TIM6.
+NVIC.BusFault_IRQn=true\:0\:0\:false\:false\:true\:false\:false
+NVIC.DebugMonitor_IRQn=true\:0\:0\:false\:false\:true\:false\:false
+NVIC.DMA1_Stream5_IRQn=true\:5\:0\:false\:false\:true\:true\:true
+NVIC.DMA1_Stream6_IRQn=true\:5\:0\:false\:false\:true\:true\:true
+NVIC.EXTI9_5_IRQn=true\:6\:0\:false\:false\:true\:true\:true
+NVIC.HardFault_IRQn=true\:0\:0\:false\:false\:true\:false\:false
+NVIC.MemoryManagement_IRQn=true\:0\:0\:false\:false\:true\:false\:false
+NVIC.NonMaskableInt_IRQn=true\:0\:0\:false\:false\:true\:false\:false
+NVIC.PendSV_IRQn=true\:0\:0\:false\:false\:true\:false\:false
+NVIC.PriorityGroup=NVIC_PRIORITYGROUP_4
+NVIC.SVCall_IRQn=true\:0\:0\:false\:false\:true\:false\:false
+NVIC.SysTick_IRQn=true\:0\:0\:false\:false\:true\:false\:false
+NVIC.TIM1_BRK_TIM9_IRQn=true\:5\:0\:false\:false\:true\:true\:true
+NVIC.TIM1_UP_TIM10_IRQn=true\:5\:0\:false\:false\:true\:true\:true
+NVIC.USART2_IRQn=true\:5\:0\:false\:false\:true\:true\:true
+NVIC.UsageFault_IRQn=true\:0\:0\:false\:false\:true\:false\:false
+
+# ---------- GPIO / pin map ----------
+PA2.Signal=USART2_TX
+PA3.Signal=USART2_RX
+PA7.Signal=S_TIM1_CH1N
+PA8.Signal=S_TIM1_CH1
+PA9.Signal=S_TIM1_CH2
+PA10.Signal=S_TIM1_CH3
+PB0.Signal=S_TIM1_CH2N
+PB1.Signal=S_TIM1_CH3N
+PB6.Signal=GPXTI6
+PB7.Signal=GPXTI7
+PB8.Signal=GPXTI8
+
+# ---------- Pin labels / modes ----------
+PB6.GPIOParameters=GPIO_PuPd,GPIO_ModeDefaultEXTI
+PB6.GPIO_ModeDefaultEXTI=GPIO_MODE_IT_RISING_FALLING
+PB6.GPIO_PuPd=GPIO_PULLUP
+PB6.Locked=true
+PB7.GPIOParameters=GPIO_PuPd,GPIO_ModeDefaultEXTI
+PB7.GPIO_ModeDefaultEXTI=GPIO_MODE_IT_RISING_FALLING
+PB7.GPIO_PuPd=GPIO_PULLUP
+PB7.Locked=true
+PB8.GPIOParameters=GPIO_PuPd,GPIO_ModeDefaultEXTI
+PB8.GPIO_ModeDefaultEXTI=GPIO_MODE_IT_RISING_FALLING
+PB8.GPIO_PuPd=GPIO_PULLUP
+PB8.Locked=true
+PC13.GPIOParameters=PinStateLabel
+PC13.Locked=true
+PC13.Signal=GPIO_Output
+PC13.PinStateLabel=LED
+
+# HAL / CMSIS keep alive
+Shdmn.IRP.Section0=
+Shdmn.Pinout=
+SH.GPXIN1.0=GPXIN1
+SH.GPXIN1.1=Configure_Pins
+SH.GPXIN10.0=GPXIN10
+SH.GPXIN10.1=USART2_Activate
+SH.GPXIN11.0=GPXIN11
+SH.GPXIN11.1=USART2_Configuration
+SH.GPXIN12.0=GPXIN12
+SH.GPXIN12.1=USART2_Interrupt_Receive
+SH.GPXIN13.0=GPXIN13
+SH.GPXIN13.1=GP_TIMER
+SH.GPXIN14.0=GP_TIMER
+SH.GPXIN14.1=GP14.Configure
+SH.GPXIN15.0=GP_TIMER
+SH.GPXIN15.1=GP15.Configure
+SH.GPXIN16.0=GP_TIMER
+SH.GPXIN16.1=GP16.Configure
+SH.GPXIN17.0=GP_TIMER
+SH.GPXIN17.1=GP17.Configure
+SH.GPXIN18.0=GP_TIMER
+SH.GPXIN18.1=GP18.Configure
+SH.GPXIN19.0=GP_TIMER
+SH.GPXIN19.1=GP19.Configure
+SH.GPXIN2.0=GPXIN2
+SH.GPXIN2.1=NVIC
+SH.GPXIN3.0=GPXIN3
+SH.GPXIN3.1=NVIC
+SH.GPXIN4.0=GPXIN4
+SH.GPXIN4.1=NVIC
+SH.GPXIN5.0=GPXIN5
+SH.GPXIN5.1=NVIC
+SH.GPXIN6.0=GPXIN6
+SH.GPXIN6.1=NVIC
+SH.GPXIN7.0=GPXIN7
+SH.GPXIN7.1=NVIC
+SH.GPXIN8.0=GPXIN8
+SH.GPXIN8.1=NVIC
+SH.GPXIN9.0=GPXIN9
+SH.GPXIN9.1=NVIC
