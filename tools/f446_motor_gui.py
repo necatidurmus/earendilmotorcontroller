@@ -1,0 +1,380 @@
+#!/usr/bin/env python3
+"""F446 -> F411 single motor GUI.
+
+Usage:
+    python tools/f446_motor_gui.py
+    python tools/f446_motor_gui.py --port /dev/ttyACM0
+
+Requires: pip install pyserial
+"""
+
+import argparse
+import queue
+import sys
+import threading
+import time
+import tkinter as tk
+from tkinter import ttk, messagebox
+
+try:
+    import serial
+    from serial.tools import list_ports
+except ImportError:
+    serial = None
+    list_ports = None
+
+
+def serial_ports():
+    if list_ports is None:
+        return []
+    return sorted(p.device for p in list_ports.comports())
+
+
+def safe_int(val, default=0):
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        return default
+
+
+class SerialClient:
+    def __init__(self):
+        self.ser = None
+        self.rx_queue = queue.Queue(maxsize=2000)
+        self.lock = threading.Lock()
+        self.running = False
+        self.reader = None
+
+    def connect(self, port, baud):
+        if serial is None:
+            raise RuntimeError("pyserial missing. Run: pip install pyserial")
+        self.disconnect()
+        self.ser = serial.Serial(port=port, baudrate=baud, timeout=0.1)
+        self.running = True
+        self.reader = threading.Thread(target=self._reader_loop, daemon=True)
+        self.reader.start()
+
+    def disconnect(self):
+        self.running = False
+        if self.reader and self.reader.is_alive():
+            self.reader.join(timeout=0.5)
+        self.reader = None
+        if self.ser:
+            try:
+                self.ser.close()
+            except Exception:
+                pass
+        self.ser = None
+
+    def is_connected(self):
+        return self.ser is not None and self.ser.is_open
+
+    def send(self, line):
+        line = line.strip()
+        if not line:
+            return
+        with self.lock:
+            if not self.is_connected():
+                raise RuntimeError("Serial not connected")
+            self.ser.write((line + "\n").encode("utf-8"))
+            self.ser.flush()
+
+    def _reader_loop(self):
+        buf = b""
+        while self.running and self.ser and self.ser.is_open:
+            try:
+                chunk = self.ser.read(256)
+                if not chunk:
+                    continue
+                buf += chunk
+                if len(buf) > 4096:
+                    buf = buf[-4096:]
+                while b"\n" in buf:
+                    raw, buf = buf.split(b"\n", 1)
+                    line = raw.rstrip(b"\r").decode("utf-8", errors="replace")
+                    try:
+                        self.rx_queue.put_nowait(line)
+                    except queue.Full:
+                        try:
+                            self.rx_queue.get_nowait()
+                        except queue.Empty:
+                            pass
+                        try:
+                            self.rx_queue.put_nowait(line)
+                        except queue.Full:
+                            pass
+            except Exception as exc:
+                try:
+                    self.rx_queue.put_nowait(f"ERR|reader stopped: {exc}")
+                except queue.Full:
+                    pass
+                break
+
+
+class App(tk.Tk):
+    def __init__(self, default_port=""):
+        super().__init__()
+        self.title("F446 -> F411 Motor GUI")
+        self.geometry("920x640")
+
+        self.client = SerialClient()
+        self.heartbeat_cmd = None
+        self.heartbeat_interval_ms = 300
+        self.last_heartbeat_ms = 0
+
+        self.telemetry_vars = {
+            "RPM":     tk.StringVar(value="--"),
+            "T":       tk.StringVar(value="--"),
+            "D":       tk.StringVar(value="--"),
+            "DIR":     tk.StringVar(value="--"),
+            "PH":      tk.StringVar(value="--"),
+            "SP":      tk.StringVar(value="--"),
+            "BRAKE":   tk.StringVar(value="--"),
+            "FC":      tk.StringVar(value="--"),
+            "H":       tk.StringVar(value="--"),
+            "PWM_SET": tk.StringVar(value="--"),
+            "PWM_ACT": tk.StringVar(value="--"),
+        }
+
+        self._default_port = default_port
+        self._build_ui()
+        self.after(50, self._tick)
+
+    def _build_ui(self):
+        top = ttk.Frame(self, padding=8)
+        top.pack(fill="x")
+
+        ttk.Label(top, text="Port").pack(side="left")
+        ports = serial_ports()
+        default = self._default_port if self._default_port else (ports[0] if ports else "")
+        self.port_var = tk.StringVar(value=default)
+        self.port_combo = ttk.Combobox(top, textvariable=self.port_var, values=ports, width=18)
+        self.port_combo.pack(side="left", padx=4)
+
+        ttk.Button(top, text="Refresh", command=self._refresh_ports).pack(side="left", padx=2)
+
+        ttk.Label(top, text="Baud").pack(side="left", padx=(12, 2))
+        self.baud_var = tk.StringVar(value="115200")
+        ttk.Entry(top, textvariable=self.baud_var, width=8).pack(side="left")
+
+        self.connect_btn = ttk.Button(top, text="Connect", command=self._connect)
+        self.connect_btn.pack(side="left", padx=8)
+        self.disconnect_btn = ttk.Button(top, text="Disconnect", command=self._disconnect, state="disabled")
+        self.disconnect_btn.pack(side="left")
+
+        ttk.Button(top, text="PING", command=lambda: self._send("ping")).pack(side="left", padx=(20, 2))
+        ttk.Button(top, text="HELP", command=lambda: self._send("help")).pack(side="left", padx=2)
+
+        main = ttk.Frame(self, padding=8)
+        main.pack(fill="both", expand=True)
+
+        left = ttk.LabelFrame(main, text="Motor Control", padding=10)
+        left.pack(side="left", fill="y", padx=(0, 8))
+
+        self.mode_var = tk.StringVar(value="duty")
+        ttk.Radiobutton(left, text="Duty mode", variable=self.mode_var, value="duty").grid(row=0, column=0, sticky="w")
+        ttk.Radiobutton(left, text="Speed/RPM mode", variable=self.mode_var, value="rpm").grid(row=0, column=1, sticky="w")
+
+        ttk.Label(left, text="PWM (0-250)").grid(row=1, column=0, sticky="w", pady=(12, 0))
+        self.pwm_var = tk.IntVar(value=20)
+        ttk.Scale(left, from_=0, to=250, variable=self.pwm_var, orient="horizontal", length=220).grid(row=2, column=0, columnspan=2)
+        ttk.Entry(left, textvariable=self.pwm_var, width=8).grid(row=2, column=2, padx=4)
+
+        ttk.Label(left, text="RPM (0-500)").grid(row=3, column=0, sticky="w", pady=(12, 0))
+        self.rpm_var = tk.IntVar(value=30)
+        ttk.Scale(left, from_=0, to=500, variable=self.rpm_var, orient="horizontal", length=220).grid(row=4, column=0, columnspan=2)
+        ttk.Entry(left, textvariable=self.rpm_var, width=8).grid(row=4, column=2, padx=4)
+
+        ttk.Label(left, text="Heartbeat ms").grid(row=5, column=0, sticky="w", pady=(12, 0))
+        self.hb_var = tk.IntVar(value=300)
+        ttk.Entry(left, textvariable=self.hb_var, width=8).grid(row=5, column=1, sticky="w")
+
+        btns = ttk.Frame(left)
+        btns.grid(row=6, column=0, columnspan=3, pady=16)
+
+        ttk.Button(btns, text="Forward", command=self._forward).grid(row=0, column=0, padx=4, pady=4)
+        ttk.Button(btns, text="Backward", command=self._backward).grid(row=0, column=1, padx=4, pady=4)
+        ttk.Button(btns, text="STOP", command=self._stop).grid(row=1, column=0, padx=4, pady=4)
+        ttk.Button(btns, text="E-STOP", command=self._estop).grid(row=1, column=1, padx=4, pady=4)
+
+        ttk.Button(left, text="mode duty", command=lambda: self._send("m1 mode duty")).grid(row=7, column=0, sticky="ew", pady=2)
+        ttk.Button(left, text="mode speed", command=lambda: self._send("m1 mode speed")).grid(row=7, column=1, sticky="ew", pady=2)
+        ttk.Button(left, text="kick off", command=lambda: self._send("m1 kick off")).grid(row=8, column=0, sticky="ew", pady=2)
+        ttk.Button(left, text="hall", command=lambda: self._send("m1 hall")).grid(row=8, column=1, sticky="ew", pady=2)
+        ttk.Button(left, text="status", command=lambda: self._send("m1 status")).grid(row=9, column=0, sticky="ew", pady=2)
+        ttk.Button(left, text="clrerr", command=lambda: self._send("m1 clrerr")).grid(row=9, column=1, sticky="ew", pady=2)
+
+        raw = ttk.LabelFrame(left, text="Raw command", padding=8)
+        raw.grid(row=10, column=0, columnspan=3, sticky="ew", pady=(14, 0))
+        self.raw_var = tk.StringVar(value="status")
+        ttk.Entry(raw, textvariable=self.raw_var, width=28).pack(side="left", padx=(0, 4))
+        ttk.Button(raw, text="to F411", command=self._send_raw_to_f411).pack(side="left", padx=2)
+        ttk.Button(raw, text="to F446", command=self._send_raw_to_f446).pack(side="left", padx=2)
+
+        right = ttk.Frame(main)
+        right.pack(side="left", fill="both", expand=True)
+
+        telem = ttk.LabelFrame(right, text="M1 Telemetry", padding=8)
+        telem.pack(fill="x")
+        keys = list(self.telemetry_vars.keys())
+        for i, key in enumerate(keys):
+            row = (i // 5) * 2
+            col = i % 5
+            ttk.Label(telem, text=key).grid(row=row, column=col, padx=8, sticky="w")
+            ttk.Label(telem, textvariable=self.telemetry_vars[key],
+                       font=("TkDefaultFont", 11, "bold")).grid(row=row + 1, column=col, padx=8, sticky="w")
+
+        console_frame = ttk.LabelFrame(right, text="Console", padding=8)
+        console_frame.pack(fill="both", expand=True, pady=(8, 0))
+        self.console = tk.Text(console_frame, height=18, wrap="none")
+        self.console.pack(fill="both", expand=True)
+
+    def _refresh_ports(self):
+        ports = serial_ports()
+        self.port_combo["values"] = ports
+        if ports and not self.port_var.get():
+            self.port_var.set(ports[0])
+
+    def _connect(self):
+        try:
+            baud = safe_int(self.baud_var.get(), 115200)
+            self.client.connect(self.port_var.get(), baud)
+            self.connect_btn.configure(state="disabled")
+            self.disconnect_btn.configure(state="normal")
+            self._log("connected to " + self.port_var.get())
+        except Exception as exc:
+            messagebox.showerror("Connect error", str(exc))
+
+    def _disconnect(self):
+        self._stop_heartbeat()
+        if self.client.is_connected():
+            try:
+                self.client.send("stop")
+            except Exception:
+                pass
+        self.client.disconnect()
+        self.connect_btn.configure(state="normal")
+        self.disconnect_btn.configure(state="disabled")
+        self._log("disconnected")
+
+    def _send(self, line):
+        try:
+            self.client.send(line)
+            self._log("TX " + line)
+        except Exception as exc:
+            self._log("SEND ERR " + str(exc))
+
+    def _command_for(self, direction):
+        if self.mode_var.get() == "rpm":
+            rpm = max(0, min(500, safe_int(self.rpm_var.get(), 30)))
+            signed = rpm if direction == "forward" else -rpm
+            return f"m1 rpm {signed}"
+        pwm = max(0, min(250, safe_int(self.pwm_var.get(), 20)))
+        letter = "f" if direction == "forward" else "b"
+        return f"m1 {letter}{pwm}"
+
+    def _forward(self):
+        mode_name = "speed" if self.mode_var.get() == "rpm" else "duty"
+        self._send(f"m1 mode {mode_name}")
+        cmd = self._command_for("forward")
+        self._send(cmd)
+        self._start_heartbeat(cmd)
+
+    def _backward(self):
+        mode_name = "speed" if self.mode_var.get() == "rpm" else "duty"
+        self._send(f"m1 mode {mode_name}")
+        cmd = self._command_for("backward")
+        self._send(cmd)
+        self._start_heartbeat(cmd)
+
+    def _stop(self):
+        self._stop_heartbeat()
+        self._send("stop")
+
+    def _estop(self):
+        self._stop_heartbeat()
+        self._send("safe")
+        self.after(100, lambda: self._send("stop"))
+
+    def _send_raw_to_f411(self):
+        raw = self.raw_var.get().strip()
+        if raw:
+            self._send("m1 " + raw)
+
+    def _send_raw_to_f446(self):
+        raw = self.raw_var.get().strip()
+        if raw:
+            self._send(raw)
+
+    def _start_heartbeat(self, cmd):
+        self.heartbeat_cmd = cmd
+        self.heartbeat_interval_ms = max(100, min(2000, safe_int(self.hb_var.get(), 300)))
+        self.last_heartbeat_ms = int(time.time() * 1000)
+
+    def _stop_heartbeat(self):
+        self.heartbeat_cmd = None
+
+    def _tick(self):
+        try:
+            now_ms = int(time.time() * 1000)
+            if self.heartbeat_cmd and now_ms - self.last_heartbeat_ms >= self.heartbeat_interval_ms:
+                self.last_heartbeat_ms = now_ms
+                self._send(self.heartbeat_cmd)
+
+            while True:
+                try:
+                    line = self.client.rx_queue.get_nowait()
+                except queue.Empty:
+                    break
+                self._handle_line(line)
+        except Exception as exc:
+            self._log(f"TICK ERR: {exc}")
+
+        self.after(50, self._tick)
+
+    def _handle_line(self, line):
+        self._log("RX " + line)
+
+        if line.startswith("M1|"):
+            payload = line[3:]
+            fields = {}
+            for part in payload.split(","):
+                if ":" not in part:
+                    continue
+                k, v = part.split(":", 1)
+                fields[k.strip()] = v.strip()
+
+            if "Tcmd" in fields and "T" not in fields:
+                fields["T"] = fields["Tcmd"]
+
+            for key, var in self.telemetry_vars.items():
+                if key in fields:
+                    var.set(fields[key])
+
+    def _log(self, line):
+        ts = time.strftime("%H:%M:%S")
+        self.console.insert("end", f"[{ts}] {line}\n")
+        line_count = int(self.console.index("end-1c").split(".")[0])
+        if line_count > 1000:
+            self.console.delete("1.0", "200.0")
+        self.console.see("end")
+
+    def destroy(self):
+        try:
+            self._stop_heartbeat()
+            if self.client.is_connected():
+                try:
+                    self.client.send("stop")
+                except Exception:
+                    pass
+            self.client.disconnect()
+        except Exception as exc:
+            print(f"Cleanup error: {exc}", file=sys.stderr)
+        super().destroy()
+
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser(description="F446 -> F411 Motor GUI")
+    ap.add_argument("--port", default="", help="Default serial port")
+    args = ap.parse_args()
+    App(default_port=args.port).mainloop()

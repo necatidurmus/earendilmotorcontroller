@@ -1,316 +1,323 @@
-# BLDC Motor Driver Module
+# F411 Motor Controller + F446 Bridge Test System
 
-> STM32 Black Pill F411CE — Sensor-based 3-phase BLDC motor driver with UART control
+STM32F411 tabanlı BLDC motor controller firmware ve F446 tabanlı test bridge sistemi.
 
----
-
-## Project Summary
-
-This project implements a single-motor BLDC driver module on an STM32F411CE (Black Pill) microcontroller. The driver uses 6-step commutation with Hall sensor feedback and accepts motion commands via UART.
-
-The module is designed as a building block for a 4-motor skid-steer vehicle. Multiple modules connect to a hub STM32 (separate project) which multiplexes commands from a Python host.
-
-**Current Status:** Prototype working with f/b/s motion protocol.
-
----
-
-## Hardware Target
-
-| Component | Specification |
-|-----------|---------------|
-| MCU | STM32F411CE (Black Pill V3) |
-| Motor | 3-phase BLDC with 3 Hall sensors |
-| Gate Drivers | 3× L6388ED013TR (half-bridge) |
-| MOSFETs | 6× IRFB7730 N-channel (22Ω gate resistors) |
-| Current Sense | 0.5mΩ shunt + INA181A1 (20V/V gain) → PA0 |
-| Voltage Sense | Resistive divider (47kΩ/2.2kΩ) → PA4 |
-| Hall Conditioning | Pull-up + series network (R1-R6, R10, R11) |
-| Bus Capacitors | 2× 470µF bulk + 2× 100µF support |
-| Bootstrap | 1µF caps + diodes per phase (D2-D4, C1-C3) |
-| Regulation | L7805 (5V) + Black Pill onboard 3.3V |
-| Protection | Fuse (J3) + TVS (D1) |
-| Throttle | J1 connector (47kΩ/47kΩ/22nF filter) — hardware ready |
-| Communication | UART 115200 baud (PA2 TX, PA3 RX) + USB Serial |
-| PWM | 8-bit resolution, ~8kHz target frequency |
-
-**Note:** Current sense (PA0) and voltage sense (PA4) are available on hardware but not yet used in firmware. Throttle input (J1) hardware is present but firmware usage is TBD.
-
----
-
-## Software Components
-
-| File | Purpose |
-|------|---------|
-| `src/main.cpp` | Firmware: motor control, commutation, CLI, telemetry |
-| `tools/wasd_controller.py` | Python host: curses-based terminal UI (legacy, being replaced) |
-| `platformio.ini` | Build configuration |
-| `AGENTS.md` | Agent rules for AI-assisted development |
-| `ISSUES.md` | Verified issues and false claim analysis |
-| `ARCHITECTURE.md` | Technical architecture documentation |
-| `ROADMAP.md` | Development roadmap (7 phases) |
-
----
-
-## Current State
-
-### What Works
-- 6-step BLDC commutation with Hall sensor feedback
-- Hall sensor debouncing and transition validation
-- Kick (initial torque burst) and ramp (gradual duty increase)
-- EEPROM-persistent hall map, config, and operating mode
-- Three operating modes: Normal (CLI), Python (WASD), Settings (clean monitor)
-- UART command processing via ring buffer and command queue
-- RPM calculation from Hall sensor transitions
-- Telemetry output (RPM, duty, direction, phase, PWM)
-- Service tasks: scan, test, identify (hall map auto-detection)
-- Software watchdog in Normal/Settings modes (800ms timeout)
-
-### What Needs Work
-- Python mode watchdog is disabled (safety risk)
-- No hardware watchdog (IWDG)
-- Command queue processes only 1 command per loop iteration
-- Default PWM is hardcoded to 60 (should be configurable)
-- Protocol: f/b/s motion commands with lease watchdog
-- No software dead-time in MOSFET switching
-
-See [ISSUES.md](ISSUES.md) for full issue list.
-
----
-
-## Control Flow
+## Proje Yapısı
 
 ```
-loop() {
-  1. runMotorControlScheduler()    // 60µs motor tick (highest priority)
-  2. uartDrainToRing()             // collect serial data into ring buffers
-  3. processRxRingToLines()        // parse lines from ring buffers
-  4. processQueuedCommands()       // execute commands (mode-dependent)
-  5. updateServiceTask()           // handle scan/test/identify
-  6. sendTelemetry()               // send status to host
-  7. checkCommandWatchdog()        // failsafe (Normal/Settings only)
-}
+.
+├── f411-motor-cube/          # F411 motor controller firmware (STM32Cube)
+│   ├── App/                  # Uygulama kodu (motor kontrol, Hall, UART)
+│   ├── Core/                 # CubeMX generated kod (GPIO, TIM, USART)
+│   ├── Drivers/              # HAL/LL drivers (framework tarafından sağlanır)
+│   ├── f411-motor-cube.ioc   # CubeMX konfigürasyon dosyası
+│   └── platformio.ini        # PlatformIO build config
+│
+├── f446-bridge-test/         # F446 test bridge firmware (Arduino)
+│   ├── src/main.cpp          # Bridge ana kod
+│   ├── include/              # Config header
+│   └── platformio.ini        # PlatformIO build config
+│
+├── tools/                    # PC test araçları
+│   ├── f446_motor_gui.py     # Tkinter GUI (motor kontrol, telemetry)
+│   └── f446_serial_smoke_test.py  # Otomatik smoke test
+│
+└── README.md                 # Bu dosya
 ```
 
-The motor control tick runs at 60µs intervals (~16.6kHz). It handles Hall sensor reading, duty ramping, and MOSFET commutation. All other tasks run in the main loop at whatever speed the loop completes.
+## F411 Motor Controller
 
----
+STM32F411CEU6 tabanlı BLDC hub motor controller.
 
-## Motor State Machine
+### Özellikler
 
-```
-Stopped → (f/b command) → Kick → (kickMs timeout) → Running
-Running → (direction change) → NeutralWait → Kick → Running
-Running → (brake command) → Braking → (timeout/release) → Stopped
-Any → (stop command / watchdog) → Stopped
-Any → (hall fault / transition spam) → Fault
-```
+- **PWM:** TIM1 edge-aligned 20 kHz (ARR=4799)
+- **Commutation:** 6-step, Hall sensor feedback
+- **Hall Capture:** EXTI on PB6/PB7/PB8, TIM2 1 MHz timestamps
+- **UART:** DMA RX circular + DMA TX ring buffer (115200 baud)
+- **Speed PI:** Closed-loop RPM control with command heartbeat
+- **Fault System:** Latching faults, requires `clrerr` to clear
 
-| Phase | Description | Duration |
-|-------|-------------|----------|
-| Stopped | All outputs off | Until command |
-| Kick | High-torque startup burst | 120ms (configurable) |
-| Running | Normal commutation with ramp | Until stop/brake/fault |
-| NeutralWait | Off, waiting for current decay | 80ms |
-| Braking | Active braking (low-side short) | Until timeout or release |
-| Fault | Error state, outputs off | Until reset |
+### Pin Mapping
 
----
+| Pin | Function |
+|-----|----------|
+| PA8, PA7 | Phase A high/low (TIM1_CH1/CH1N) |
+| PA9, PB0 | Phase B high/low (TIM1_CH2/CH2N) |
+| PA10, PB1 | Phase C high/low (TIM1_CH3/CH3N) |
+| PB6, PB7, PB8 | Hall sensors (EXTI, pull-up) |
+| PA2, PA3 | UART TX/RX (115200 baud) |
+| PC13 | LED |
 
-## UART Protocol
+### Build & Flash
 
-### Motion Commands (f/b/s)
-
-| Command | Action | Example |
-|---------|--------|---------|
-| `f` | Forward at default PWM | `f` |
-| `f<duty>` | Forward at specified duty (0-255) | `f150` |
-| `b` | Backward at default PWM | `b` |
-| `b<duty>` | Backward at specified duty | `b200` |
-| `s` | Stop (coast) — all outputs off | `s` |
-| `x` | Brake (active) — low-side short | `x` |
-
-**Command format:** Single-character command with optional 0-255 duty suffix, terminated by newline (`\n`).
-
-### Lease / Watchdog
-
-Each motion command (`f`, `b`, `x`) refreshes an 800ms lease. If no motion command is received within 800ms, the motor automatically stops (coast).
-
-- Forward/backward/brake commands refresh the lease
-- Stop (`s`) does not refresh lease (immediate coast)
-- 800ms timeout → automatic coast stop
-
-### Telemetry Format
-
-```
-RPM:<val>,D:<duty>,DIR:<F/R>,PH:<phase>,PWM_SET:<val>,PWM_ACT:<val>,BRAKE:<0/1>,FC:<code>,H:<hall>
+```bash
+cd f411-motor-cube
+pio run                    # Build
+pio run -t upload          # Flash via ST-Link
+pio device monitor         # Serial monitor (115200 baud)
 ```
 
-| Field | Description |
-|-------|-------------|
-| RPM | Calculated revolutions per minute |
-| D | Instantaneous duty cycle (0-255) |
-| DIR | Direction: F=forward, R=reverse, S=stopped |
-| PH | Motor phase: 0=Stopped, 1=Kick, 2=Running, 3=NeutralWait, 4=Fault, 5=Braking |
-| PWM_SET | PWM value set by host (0-255) |
-| PWM_ACT | PWM value used by firmware (after ramp/clamp) |
-| BRAKE | Brake active flag: 0=off, 1=braking |
-| FC | Fault code (0=no fault) |
-| H | Raw Hall sensor value (1-6) |
+### UART Protocol
 
-**Example:** `RPM:2450,D:180,DIR:F,PH:2,PWM_SET:200,PWM_ACT:180,BRAKE:0,FC:0,H:3`
+**Commands:**
+- `mode duty` / `mode speed` - Çalışma modu
+- `f<pwm>` / `b<pwm>` - Forward/backward (duty 0-250)
+- `rpm <signed>` - RPM hedef (speed mode, ±500)
+- `stop` - Coast (all gates off)
+- `brake` - Coast (active brake disabled)
+- `hall` / `status` - Diagnostics
+- `clrerr` - Clear fault latch
+- `identify` - Hall map auto-detect
+- `pi <kp> <ki>` - Speed PI gains
+- `base <lo> <mid> <hi>` - Feed-forward PWM
+- `boost <lo> <mid> <hi> <ms>` - Start boost
+- `ramp <up> <down>` - RPM ramp rates
 
----
+**Telemetry (compact):**
+```
+RPM:<measured>,T:<target>,D:<duty>,DIR:<F|R|N>,PH:<phase>,SP:<0|1>,BRAKE:<0|1>,FC:<fault>,H:<hall>,PWM_SET:<targetDuty>,PWM_ACT:<actualDuty>
+```
 
-## Safety / Failsafe
+### Safety Features
 
-### Hardware Protection (Implemented)
-- **Fuse (J3):** Board-level overcurrent protection
-- **TVS diode (D1):** Transient voltage suppression
-- **Gate resistors (22Ω):** Limits dV/dt, reduces ringing
-- **L6388 internal dead-time:** Gate driver cross-conduction protection
-- **Current sense (INA181A1):** 0.5mΩ shunt + 20V/V gain → PA0 ADC (hardware ready, firmware TBD)
-- **Voltage sense:** 47kΩ/2.2kΩ divider → PA4 ADC (hardware ready, firmware TBD)
+- **Command Watchdog:** 800 ms timeout, motor stops if no command
+- **Host Disconnect:** 2000 ms timeout, raises FAULT_HOST_LOST
+- **Fault Latching:** Motor stops on fault, requires `clrerr`
+- **No Current Sense:** Use current-limited PSU for testing
+- **No Active Brake:** `brake` command = coast (safety)
 
-### Software Protection (Implemented)
-- Software watchdog: 800ms timeout, stops motor if no command received (Normal/Settings modes)
-- Hall timeout: faults if no valid Hall within 400ms of start
-- Transition spam protection: faults if >20 invalid Hall transitions
-- EEPROM validation: magic number + checksum on all stored data
+## F446 Bridge Test System
 
-### Missing
-- **Hardware watchdog (IWDG):** Not implemented. If firmware hangs, motor continues running.
-- **Python mode watchdog:** Disabled. If Python host crashes, motor runs indefinitely.
-- **Software dead-time:** Not implemented. L6388 has internal dead-time, but software-level DT not added.
-- **Host connection monitor:** Not implemented. Serial disconnect doesn't trigger stop.
-- **Current-based protection:** Hardware ready (PA0), firmware not implemented.
-- **Voltage monitoring:** Hardware ready (PA4), firmware not implemented.
+STM32F446RE tabanlı UART bridge, F411 motor controller'ı PC'den test etmek için.
 
----
+### Mimari
+
+```
+PC (GUI/CLI)
+    │ USB Serial (ST-Link VCP)
+    │ 115200 baud
+    ▼
+F446 Bridge (Nucleo-F446RE)
+    │ USART1 (PA9/PA10)
+    │ 115200 baud
+    ▼
+F411 Motor Controller (USART2)
+```
+
+### Özellikler
+
+- **Single Motor:** M1 prefix ile telemetry forwarding
+- **Command Passthrough:** F411 komutlarını doğrudan iletir
+- **Bridge Commands:** `ping`, `help`, `bridge on/off`, `stop`, `safe`
+- **LED Heartbeat:** 500 ms blink
+
+### Build & Flash
+
+```bash
+cd f446-bridge-test
+pio run                    # Build
+pio run -t upload          # Flash via ST-Link
+pio device monitor         # Serial monitor (115200 baud)
+```
+
+### Bridge Commands
+
+```
+ping                 → pong
+help                 → Komut listesi
+bridge on/off        → Telemetry forwarding aç/kapat
+m1 <cmd>             → F411'e komut gönder
+raw <cmd>            → F411'e raw komut gönder
+stop                 → Safe stop (rpm 0 + stop)
+safe / estop         → Safe stop (rpm 0 + stop)
+```
+
+**Direct passthrough examples:**
+```
+f50, b50, rpm 30, rpm -30, mode duty, mode speed, hall, status
+```
+
+## Test Tools
+
+### f446_motor_gui.py
+
+Tkinter tabanlı GUI, motor kontrol ve telemetry görüntüleme.
+
+**Features:**
+- PWM/RPM slider kontrolü
+- Forward/backward/stop butonları
+- Heartbeat (300 ms default)
+- Telemetry parsing (RPM, duty, fault, hall)
+- Raw command gönderme
+
+**Usage:**
+```bash
+pip install pyserial
+python tools/f446_motor_gui.py
+```
+
+### f446_serial_smoke_test.py
+
+Otomatik smoke test, motor hareket ettirmeden bağlantı testi.
+
+**Tests:**
+- Ping/pong
+- Help command
+- Bridge on/off
+- M1 status/hall (F411 bağlıysa)
+- Stop command
+- Unknown command handling
+
+**Usage:**
+```bash
+python tools/f446_serial_smoke_test.py --port /dev/ttyACM0
+```
+
+## Bring-up Sequence
+
+### 1. F411 Firmware Test
+
+```bash
+cd f411-motor-cube
+pio run -t upload
+pio device monitor
+```
+
+**Verify:**
+```
+> status
+--- STATUS ---
+Mode: DUTY
+Phase: STOPPED
+...
+
+> hall
+[INFO] Hall=5 State=0
+
+> help
+=============================
+ f/forward  |  f<0-255>
+ b/backward |  b<0-255>
+ ...
+```
+
+### 2. F446 Bridge Test
+
+```bash
+cd f446-bridge-test
+pio run -t upload
+pio device monitor
+```
+
+**Verify:**
+```
+> ping
+pong
+
+> help
+F446 bridge commands:
+  ping                 -> pong
+  ...
+
+> m1 status
+TX|status
+M1|--- STATUS ---
+...
+```
+
+### 3. Motor Test (GUI)
+
+```bash
+python tools/f446_motor_gui.py
+```
+
+1. Connect to F446 (ST-Link VCP port)
+2. Click "mode duty"
+3. Click "kick off" (safety)
+4. Set PWM = 10
+5. Click "Forward"
+6. Watch telemetry (RPM, duty, hall)
+7. Click "STOP"
+
+### 4. Smoke Test
+
+```bash
+python tools/f446_serial_smoke_test.py --port /dev/ttyACM0
+```
+
+**Expected output:**
+```
+PASS  ping -> pong
+PASS  help -> command list
+PASS  bridge on -> OK
+PASS  m1 status -> response
+PASS  stop -> OK
+PASS  unknown -> ERR
+```
+
+## Hardware Connections
+
+### F446 → F411
+
+```
+F446 (Nucleo-F446RE)        F411 (Blackpill)
+─────────────────────        ────────────────
+PA9  (USART1_TX)    →       PA3 (USART2_RX)
+PA10 (USART1_RX)    ←       PA2 (USART2_TX)
+GND                 ↔       GND
+```
+
+### Power
+
+- F446: USB powered (ST-Link)
+- F411: External 12V PSU (current-limited, 0.5A max)
+- **Common ground required**
+
+## Safety Rules
+
+1. **Motor disconnected** for first TIM1 scope test
+2. **Current-limited PSU** (0.3-0.5A) for all motor tests
+3. **Kick disabled** by default (`kick off`)
+4. **No active brake** during bring-up
+5. **Fault latch** requires `clrerr` before new motion
+6. **Command heartbeat** required (800 ms timeout)
 
 ## Known Limitations
 
-1. **Single motor only.** Current code controls one motor. 4-motor support requires hub STM32 (separate project).
-2. **Legacy WASD protocol removed.** Python host now uses f/b/s commands.
-3. **No hardware watchdog.** Firmware hang = motor continues running.
-4. **Hardcoded pin mapping.** Different board layouts require code changes.
-5. **8kHz PWM not guaranteed.** `analogWriteFrequency()` support depends on STM32 core implementation.
-6. **Current/voltage sense unused.** Hardware ready (INA181A1, divider), firmware not utilizing.
-7. **Throttle unused.** Hardware present (J1), firmware not connected.
+- **No current sense:** No ADC, no current limiting
+- **No active brake:** `brake` = coast only
+- **Storage disabled:** `save` commands return error (flash unsafe)
+- **Dead-time unverified:** DTG=63 (~0.66 µs), needs scope check
+- **Hall map:** Default map may need `identify` for your motor
 
-See [HARDWARE_OVERVIEW.md](HARDWARE_OVERVIEW.md) for complete hardware documentation.
+## Troubleshooting
 
----
+### F411 doesn't respond
 
-## Development Notes
+- Check UART wiring (PA2/PA3)
+- Verify baud rate (115200)
+- Check F411 power (12V + GND)
+- Try `m1 ping` from F446
 
-### Build
+### Motor doesn't spin
 
-```bash
-# Using PlatformIO
-pio run                    # build
-pio run -t upload          # flash
-pio device monitor         # serial monitor
-```
+- Send `clrerr` (fault may be latched)
+- Send `kick off` (safety default)
+- Check Hall sensors (send `hall`)
+- Verify mode (`mode duty` or `mode speed`)
+- Check PSU current limit
 
-### Serial Connection
+### Telemetry missing
 
-```bash
-# USB Serial (direct)
-pio device monitor -b 115200
+- Send `bridge on` (F446)
+- Check F411 telemetry interval (`telper 100`)
+- Verify F446 → F411 UART connection
 
-# FTDI adapter
-# Connect FTDI TX → PA3 (RX), FTDI RX → PA2 (TX), GND → GND
-# Then use any serial terminal at 115200 baud
-```
+## License
 
-### CLI Commands (Normal Mode)
+Proprietary - Internal use only
 
-```
-f / forward         — run forward (default PWM)
-f<duty>             — run forward at duty (0-255)
-b / backward        — run backward (default PWM)
-b<duty>             — run backward at duty
-s / stop            — stop motor
-pwm                 — show current PWM
-pwm <0-255>         — set PWM
-kick on/off         — enable/disable kick
-ramp on/off         — enable/disable ramp
-kickduty <n>        — set kick duty
-kickms <n>          — set kick duration (ms)
-ramprate <n>        — set ramp step
-rampms <n>          — set ramp interval (ms)
-savecfg             — save config to EEPROM
-loadcfg             — load config from EEPROM
-defaults            — load default config
-saveall             — save all to EEPROM
-hall                — read Hall sensors
-map                 — show Hall map
-save                — save Hall map
-reload              — reload Hall map
-mapreset            — reset Hall map to default
-scan                — scan Hall signals (10s)
-test                — test each commutation step
-identify            — auto-detect Hall map
-status              — show full status
-debug on/off        — toggle verbose debug
-clrerr              — clear error flags
-mode                — show current mode
-mode python         — switch to Python mode
-mode settings       — switch to Settings mode
-mode normal         — switch to Normal mode
-```
+## Contact
 
----
-
-## File Structure
-
-```
-asenkroncode/
-├── src/
-│   └── main.cpp              — firmware (all motor logic)
-├── tools/
-│   └── wasd_controller.py    — Python host (legacy WASD UI)
-├── docs/
-│   ├── README.md             — project documentation
-│   ├── ARCHITECTURE.md       — technical architecture
-│   ├── ROADMAP.md            — development roadmap
-│   ├── ISSUES.md             — verified issues
-│   └── problems.md           — legacy issue report
-├── platformio.ini            — build config
-├── AGENTS.md                 — agent rules
-└── README.md                 — quick links to docs
-```
-
----
-
-## Future Goals
-
-1. **Phase 0-1:** Stabilize code, implement f/b/s protocol
-2. **Phase 2-3:** FTDI test, Python host rewrite
-3. **Phase 4:** Hardware watchdog, safety layers
-4. **Phase 5:** Hub STM32 integration preparation
-5. **Phase 6:** 4-motor skid-steer vehicle
-
-See [ROADMAP.md](ROADMAP.md) for detailed phase plans.
-
----
-
-## Warnings
-
-- **Safety:** This code controls a motor. Always have a physical emergency stop (power disconnect) available during testing.
-- **Dead-time:** L6388 gate drivers have internal dead-time, but software-level dead-time is not implemented. Test on bench with current-limited power supply.
-- **Watchdog:** Python mode has no watchdog. If the Python host crashes, the motor will continue running.
-- **Prototype:** This is a prototype. Not suitable for production use without further testing and safety hardening.
-- **Current sense:** INA181A1 hardware is ready but not used in firmware. No overcurrent protection in software.
-
----
-
-## Documentation
-
-| Document | Purpose |
-|----------|---------|
-| [ISSUES.md](ISSUES.md) | Verified issues, false claims, evidence-based analysis |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Technical architecture, protocol, state machine, safety |
-| [HARDWARE_OVERVIEW.md](HARDWARE_OVERVIEW.md) | Complete hardware documentation, pin map, components |
-| [ROADMAP.md](ROADMAP.md) | 8-phase development plan with tasks, risks, test items |
-| [AGENTS.md](../AGENTS.md) | Agent rules for AI-assisted development |
+For questions or issues, contact the firmware team.
