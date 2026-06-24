@@ -50,6 +50,8 @@ bool UartProtocol_HasRecentActivity(uint32_t nowMs, uint32_t windowMs);
  * dropped so a TX bandwidth problem is visible.  Reset by clrerr. */
 uint32_t UartProtocol_GetTxDropCount(void);
 void UartProtocol_ResetTxDropCount(void);
+uint32_t UartProtocol_GetCmdDropCount(void);
+void UartProtocol_ResetCmdDropCount(void);
 
 #ifdef __cplusplus
 }

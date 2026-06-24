@@ -194,13 +194,14 @@ Compatible with the H7 `motor_dispatcher` (which sends `rpm <signed>`,
 Default cadence 100 ms (`telper <ms>` to change). Compact (default):
 
 ```
-RPM:<m>,T:<t>,D:<d>,DIR:<F|R|N>,PH:<p>,SP:<0|1>,BRAKE:<0|1>,FC:<c>,H:<h>,PWM_SET:<s>,PWM_ACT:<a>
+RPM:<m>,T:<t>,D:<d>,DIR:<F|R|N>,APP_PH:<p>,SP:<0|1>,BRAKE:<0|1>,FC:<c>,H:<h>,PWM_SET:<s>,PWM_ACT:<a>,QDROP:<q>
 ```
 
 * `RPM` measured mechanical RPM · `T` = |target rpm| (speed mode) / 0
-* `D` current applied duty (0..250) · `DIR` F/R/N · `PH` app motor phase
+* `D` current applied duty (0..250) · `DIR` F/R/N · `APP_PH` app motor phase
 * `SP` 1=speed mode · `BRAKE` 1=brake phase · `FC` fault code
 * `H` raw Hall (0..7) · `PWM_SET` target duty (0..250) · `PWM_ACT` actual applied duty (0..250, never CCR ticks)
+* `QDROP` command queue overflow drop count
 
 The H7 wheelbridge prefixes each motor line as `FL|RPM:...`,
 `FR|...`, `RL|...`, `RR|...` before forwarding to the PC.

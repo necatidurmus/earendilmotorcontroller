@@ -96,13 +96,13 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 typedef struct {
     uint8_t  rawCandidate;
     uint8_t  rawCandidateCount;
+    uint32_t candidateStartUs;
     uint8_t  stableRaw;
-    uint8_t  lastValidRaw;
     uint8_t  lastValidState;
     uint8_t  lastDrivenState;
 
     uint32_t lastValidUs;
-    uint32_t lastStableChangeUs;
+    uint32_t lastTransitionUs;
     uint32_t prevTransitionUs;
     uint32_t hallPeriodUs;
     uint32_t invalidSinceUs;
@@ -149,11 +149,10 @@ void HallSensor_Init(void)
     uint32_t now = App_GetMicros();
     uint8_t  raw = read_raw_hall();
 
-    s_hall.rawCandidate       = raw;
-    s_hall.rawCandidateCount  = 1U;
-    s_hall.stableRaw          = raw;
-    s_hall.lastStableChangeUs = now;
-    s_hall.lastValidRaw       = raw;
+    s_hall.rawCandidate      = raw;
+    s_hall.rawCandidateCount = 1U;
+    s_hall.candidateStartUs  = now;
+    s_hall.stableRaw         = raw;
 
     uint8_t mapped = Commutation_HallToState(raw);
     s_hall.lastValidUs = now;
@@ -193,16 +192,21 @@ void HallSensor_Update(void)
     uint32_t now = App_GetMicros();
     uint8_t  raw = read_raw_hall();
 
-    /* ---- Debounce: require HALL_STABLE_SAMPLES consecutive equal
-     * samples before accepting a change. ---- */
+    /* ---- Time-based debounce: require the raw value to be stable
+     * for at least HALL_DEBOUNCE_US microseconds before accepting.
+     * This replaces the old sample-count approach which depended on
+     * the main-loop iteration rate. ---- */
     if (raw == s_hall.rawCandidate) {
         if (s_hall.rawCandidateCount < 255U) s_hall.rawCandidateCount++;
     } else {
         s_hall.rawCandidate      = raw;
         s_hall.rawCandidateCount = 1U;
+        s_hall.candidateStartUs  = now;
     }
 
     if (s_hall.rawCandidateCount < HALL_STABLE_SAMPLES) return;
+    if ((now - s_hall.candidateStartUs) < HALL_DEBOUNCE_US) return;
+
     if (raw == s_hall.stableRaw) {
         /* Same stable value — but if it is an invalid code, the
          * persistence timer keeps running so a long-held 0b000/0b111
@@ -211,9 +215,8 @@ void HallSensor_Update(void)
         uint8_t prevState = Commutation_HallToState(s_hall.stableRaw);
         uint8_t newState  = Commutation_HallToState(raw);
 
-        s_hall.stableRaw          = raw;
-        s_hall.lastStableChangeUs = now;
-        s_hall.lastValidRaw       = raw;
+        s_hall.stableRaw        = raw;
+        s_hall.lastTransitionUs = now;
 
         if (!Commutation_IsValidState(newState)) {
             if (s_hall.invalidSinceUs == 0U) s_hall.invalidSinceUs = now;
@@ -222,7 +225,6 @@ void HallSensor_Update(void)
             /* Valid state — keep lastValidUs fresh so the "no Hall"
              * timeout doesn't fire while the motor is being driven. */
             s_hall.lastValidUs  = now;
-            s_hall.lastValidRaw = raw;
 
             if (!Commutation_IsTransitionValid(prevState, newState)) {
                 if (s_hall.invalidSinceUs == 0U) s_hall.invalidSinceUs = now;
@@ -312,7 +314,7 @@ void HallSensor_Update(void)
 uint8_t HallSensor_GetStableRaw(void)        { return s_hall.stableRaw; }
 uint8_t HallSensor_GetMappedState(void)      { return s_hall.lastValidState; }
 uint8_t HallSensor_GetLastDrivenState(void)  { return s_hall.lastDrivenState; }
-uint32_t HallSensor_GetLastTransitionUs(void){ return s_hall.lastStableChangeUs; }
+uint32_t HallSensor_GetLastTransitionUs(void){ return s_hall.lastTransitionUs; }
 
 bool HallSensor_HasValidEdge(void)           { return s_hall.prevTransitionUs != 0U; }
 

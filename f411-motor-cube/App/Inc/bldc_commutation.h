@@ -18,8 +18,9 @@ void Commutation_LoadDefaultMap(void);
 /* Read the current Hall map from RAM into the supplied buffer. */
 void Commutation_GetMap(uint8_t out[8]);
 
-/* Override a single Hall->state mapping (runtime only). */
-void Commutation_SetMapEntry(uint8_t hallCode, uint8_t state);
+/* Override a single Hall->state mapping (runtime only).
+ * Returns false if hallCode > 7 or state is not 0..5 / 255. */
+bool Commutation_SetMapEntry(uint8_t hallCode, uint8_t state);
 
 /* Return mapped sector (0..5) for a 3-bit Hall code, or 255 if invalid. */
 uint8_t Commutation_HallToState(uint8_t hallCode);

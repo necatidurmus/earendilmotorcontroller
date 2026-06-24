@@ -193,9 +193,18 @@ static void update_identify(void)
             Commutation_IsValidState(s_svc.id_candidate_map[5]) &&
             Commutation_IsValidState(s_svc.id_candidate_map[6])) {
             /* Apply candidate map to RAM */
-            for (uint8_t i = 0; i < 8; i++)
-                Commutation_SetMapEntry(i, s_svc.id_candidate_map[i]);
-            UartProtocol_Print("\r\n[OK] Identify updated RAM map");
+            bool map_ok = true;
+            for (uint8_t i = 0; i < 8; i++) {
+                if (!Commutation_SetMapEntry(i, s_svc.id_candidate_map[i])) {
+                    map_ok = false;
+                    break;
+                }
+            }
+            if (map_ok) {
+                UartProtocol_Print("\r\n[OK] Identify updated RAM map");
+            } else {
+                UartProtocol_Print("\r\n[ERR] Identify: map entry rejected");
+            }
         } else {
             UartProtocol_Print("\r\n[INFO] Candidate map: ");
             for (uint8_t i = 0; i < 8; i++)
@@ -242,7 +251,13 @@ static void update_identify(void)
         if ((int32_t)(now - s_svc.next_action_ms) < 0) return;
         uint8_t hall = HallSensor_GetStableRaw();
 
-        /* Same mapping as old firmware: identifyStep -> (step+2)%6 */
+        if (hall != s_svc.id_hall_a) {
+            UartProtocol_Printf("\r\n[ID] step=%u UNSTABLE hallA=%u hallB=%u",
+                                (unsigned)s_svc.id_step,
+                                (unsigned)s_svc.id_hall_a,
+                                (unsigned)hall);
+        }
+
         uint8_t mapped_state = (uint8_t)((s_svc.id_step + 2U) % 6U);
         if (hall < 8U)
             s_svc.id_candidate_map[hall] = mapped_state;
