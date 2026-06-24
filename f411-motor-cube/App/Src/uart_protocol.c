@@ -71,6 +71,7 @@ static UartSource s_q_src[CMD_QUEUE_LEN];
 static UartSource s_reply_src = UART_SRC_UART;
 static uint32_t   s_last_byte_ms = 0U;
 static uint32_t   s_tx_drop_count = 0U;   /* ISSUE-041 */
+static uint32_t   s_cmd_drop_count = 0U;
 
 static bool ring_push(char c)
 {
@@ -167,7 +168,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 static void queue_push(const char *line, UartSource src)
 {
     uint8_t next = (uint8_t)((s_q_head + 1U) % CMD_QUEUE_LEN);
-    if (next == s_q_tail) return;  /* drop on overflow */
+    if (next == s_q_tail) { s_cmd_drop_count++; return; }
     strncpy(s_queue[s_q_head], line, UART_LINE_MAX - 1U);
     s_queue[s_q_head][UART_LINE_MAX - 1U] = '\0';
     s_q_src[s_q_head] = src;
@@ -351,3 +352,5 @@ bool UartProtocol_HasRecentActivity(uint32_t nowMs, uint32_t windowMs)
 
 uint32_t UartProtocol_GetTxDropCount(void)        { return s_tx_drop_count; }
 void UartProtocol_ResetTxDropCount(void)         { s_tx_drop_count = 0U; }
+uint32_t UartProtocol_GetCmdDropCount(void)       { return s_cmd_drop_count; }
+void UartProtocol_ResetCmdDropCount(void)        { s_cmd_drop_count = 0U; }

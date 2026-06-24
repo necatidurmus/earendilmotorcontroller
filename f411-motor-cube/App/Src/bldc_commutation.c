@@ -30,10 +30,12 @@ void Commutation_GetMap(uint8_t out[8])
     memcpy(out, s_hall_to_state, sizeof(s_hall_to_state));
 }
 
-void Commutation_SetMapEntry(uint8_t hallCode, uint8_t state)
+bool Commutation_SetMapEntry(uint8_t hallCode, uint8_t state)
 {
-    if (hallCode > 7U) return;
+    if (hallCode > 7U) return false;
+    if (state > 5U && state != 255U) return false;
     s_hall_to_state[hallCode] = state;
+    return true;
 }
 
 uint8_t Commutation_HallToState(uint8_t hallCode)

@@ -138,40 +138,20 @@ void MX_TIM2_Init(void)
 }
 
 /* ============================================================
- * TIM4 — Hall sensor interface.
+ * TIM4 — Hall sensor interface (DISABLED).
  *
- * The .ioc configures PB6/PB7/PB8 as TIM4_CH1/CH2/CH3 for a TIM4
- * Hall interface, but the runtime firmware currently polls the Hall
- * pins as GPIO and timestamps edges with TIM2 (see hall_sensor.c and
- * ISSUE-007).  TIM4 is kept initialised only so the .ioc stays
- * consistent; it is not relied on for RPM measurement.
+ * Hall sensing uses GPIO EXTI on PB6/PB7/PB8 with TIM2 timestamps
+ * (see hall_sensor.c, ISSUE-007).  TIM4 Hall mode was previously
+ * initialised here, which risked CubeMX regeneration reassigning
+ * PB6/PB7/PB8 to TIM4 alternate function and breaking the EXTI
+ * Hall path.  TIM4 init is now a no-op.  The htim4 handle and
+ * HAL_TIM_Base_MspInit callback are kept link-clean.
  * ============================================================ */
 
 void MX_TIM4_Init(void)
 {
-    TIM_ClockConfigTypeDef clk = {0};
-    TIM_HallSensor_InitTypeDef hall = {0};
-
-    htim4.Instance = TIM4;
-    htim4.Init.Prescaler         = 95;             /* 96 MHz / 96 = 1 MHz */
-    htim4.Init.CounterMode       = TIM_COUNTERMODE_UP;
-    htim4.Init.Period            = 0xFFFF;
-    htim4.Init.ClockDivision     = TIM_CLOCKDIVISION_DIV1;
-    htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-
-    if (HAL_TIM_Base_Init(&htim4) != HAL_OK) {
-        Error_Handler();
-    }
-
-    clk.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
-    if (HAL_TIM_ConfigClockSource(&htim4, &clk) != HAL_OK) {
-        Error_Handler();
-    }
-
-    hall.Commutation_Delay = 0;
-    if (HAL_TIMEx_HallSensor_Init(&htim4, &hall) != HAL_OK) {
-        Error_Handler();
-    }
+    /* No-op: TIM4 is not used.  Hall sensing uses EXTI + TIM2. */
+    (void)htim4;
 }
 
 void MX_TIM6_Init(void)

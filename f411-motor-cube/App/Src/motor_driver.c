@@ -268,10 +268,18 @@ void MotorDriver_Coast(void)
 
 void MotorDriver_FaultOff(void)
 {
-    /* Hard stop: clear all channel enables immediately.  MOE is left
-     * enabled so the bridge can re-arm after a clrerr; the per-phase
-     * enable bits are the real cut-off. */
+    /* Hard stop: clear all channel enables AND clear MOE for maximum
+     * cutoff.  With MOE=0 the TIM1 outputs are forced to their
+     * idle/off state regardless of CCxE/CCxNE bits.  MOE is
+     * re-enabled by MotorDriver_Init() on the next normal start
+     * (via clrerr -> run_request -> MotorDriver_ApplyStep path).
+     *
+     * WARNING: With OSSI/OSSR disabled and no external gate-driver
+     * pulldown resistors, the physical gate pin level after MOE=0
+     * depends on the gate driver's input impedance.  This MUST be
+     * verified with an oscilloscope at BRINGUP Stage 2. */
     phase_all_off();
+    TIM1->BDTR &= ~TIM_BDTR_MOE;
     s_duty          = 0U;
     s_ccr_ticks     = 0U;
     s_last_high_idx = 0xFFU;
@@ -298,6 +306,13 @@ void MotorDriver_ApplyStep(uint8_t sector, int8_t direction, uint8_t duty)
     if (sector > 5U || direction == 0 || duty == 0U) {
         MotorDriver_AllOff();
         return;
+    }
+
+    /* Re-enable MOE if it was cleared by FaultOff.  Safe because
+     * all CCxE/CCxNE bits are clear at this point; the per-phase
+     * enables below are the real gate control. */
+    if (!(TIM1->BDTR & TIM_BDTR_MOE)) {
+        TIM1->BDTR |= TIM_BDTR_MOE;
     }
 
     MotorDriver_SetDuty(duty);

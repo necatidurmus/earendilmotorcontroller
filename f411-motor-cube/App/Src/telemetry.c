@@ -2,16 +2,15 @@
  * App/Src/telemetry.c
  * Rate-limited, non-blocking telemetry output.
  *
- * Compact format (default, matches legacy Arduino firmware so the H7
- * wheelbridge prefix "FL|"..." and tools/terminal.py parse unchanged):
- *   RPM:<m>,T:<t>,D:<d>,DIR:<F|R|N>,PH:<p>,SP:<0|1>,BRAKE:<0|1>,
+ * Compact format (default):
+ *   RPM:<m>,T:<t>,D:<d>,DIR:<F|R|N>,APP_PH:<p>,SP:<0|1>,BRAKE:<0|1>,
  *   FC:<c>,H:<h>,PWM_SET:<s>,PWM_ACT:<a>\n
  *
  *   RPM     measured mechanical RPM
  *   T       |target rpm| when speed mode, else 0
  *   D       current applied duty (0..255)
  *   DIR     F / R / N
- *   PH      app motor phase (0=STOP,1=RUN,2=BRAKE,3=NEUTRAL,4=FAULT)
+ *   APP_PH  app motor phase (0=STOP,1=RUN,2=BRAKE,3=NEUTRAL,4=FAULT)
  *   SP      1 if speed (PI) mode, else 0
  *   BRAKE   1 if brake phase, else 0
  *   FC      fault code (FaultManager)
@@ -20,7 +19,7 @@
  *   PWM_ACT actual applied duty (0..255)  -- never CCR ticks
  *
  * Debug format (dbg on):
- *   RPM:<m>,RF:<f>,Tcmd:<c>,Trmp:<r>,ERR:<e>,D:<d>,PH:<p>,FC:<c>,
+ *   RPM:<m>,RF:<f>,Tcmd:<c>,Trmp:<r>,ERR:<e>,D:<d>,SPD_PH:<p>,FC:<c>,
  *   PWM_SET:<s>,PWM_ACT:<a>\n
  * ============================================================ */
 
@@ -62,7 +61,7 @@ void Telemetry_Tick(uint32_t nowMs)
         SpeedPhase sp = SpeedPI_GetPhase();
         FaultCode fc  = FaultManager_GetLast();
 
-        UartProtocol_Printf("RPM:%u,RF:%d,Tcmd:%ld,Trmp:%d,ERR:%d,D:%u,PH:%u,FC:%u,PWM_SET:%u,PWM_ACT:%u",
+        UartProtocol_Printf("RPM:%u,RF:%d,Tcmd:%ld,Trmp:%d,ERR:%d,D:%u,SPD_PH:%u,FC:%u,PWM_SET:%u,PWM_ACT:%u",
                             (unsigned)HallSensor_CalculateRpm(),
                             (int)frpm,
                             (long)tcmd,
@@ -86,7 +85,7 @@ void Telemetry_Tick(uint32_t nowMs)
         int8_t   dir    = App_GetDirection();
         const char dirc = (dir > 0) ? 'F' : (dir < 0 ? 'R' : 'N');
 
-        UartProtocol_Printf("RPM:%lu,T:%lu,D:%u,DIR:%c,PH:%u,SP:%u,BRAKE:%u,FC:%u,H:%u,PWM_SET:%u,PWM_ACT:%u",
+        UartProtocol_Printf("RPM:%lu,T:%lu,D:%u,DIR:%c,APP_PH:%u,SP:%u,BRAKE:%u,FC:%u,H:%u,PWM_SET:%u,PWM_ACT:%u,QDROP:%lu",
                             (unsigned long)rpm,
                             (unsigned long)target,
                             (unsigned)App_GetCurrentDuty(),
@@ -97,7 +96,8 @@ void Telemetry_Tick(uint32_t nowMs)
                             (unsigned)fc,
                             (unsigned)hall,
                             (unsigned)setd,
-                            (unsigned)actd);
+                            (unsigned)actd,
+                            (unsigned long)UartProtocol_GetCmdDropCount());
         UartProtocol_PrintNewline();
     }
 }

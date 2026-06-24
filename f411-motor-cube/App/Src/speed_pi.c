@@ -158,6 +158,17 @@ void SpeedPI_Tick(uint32_t nowMs)
     float dt = (float)PID_INTERVAL_MS / 1000.0f;
     s_spi.last_tick_ms = nowMs;
 
+    /* Track the most recent Hall edge via monotonic counter BEFORE
+     * timeout check so a new edge arriving just before the timeout
+     * evaluation is not missed (race fix). */
+    {
+        uint32_t edges = HallSensor_GetEdgeCounter();
+        if (edges != s_spi.hall_edge_counter) {
+            s_spi.last_hall_edge_ms = nowMs;
+            s_spi.hall_edge_counter = edges;
+        }
+    }
+
     /* Hall feedback timeout.  If we ever got an edge but haven't seen
      * one for RPM_FEEDBACK_TIMEOUT_MS, raise a fault. */
     if (s_spi.last_hall_edge_ms != 0U &&
@@ -175,15 +186,6 @@ void SpeedPI_Tick(uint32_t nowMs)
         s_spi.phase             = SPD_IDLE;
         s_spi.integral          = 0.0f;
         return;
-    }
-
-    /* Track the most recent Hall edge via monotonic counter. */
-    {
-        uint32_t edges = HallSensor_GetEdgeCounter();
-        if (edges != s_spi.hall_edge_counter) {
-            s_spi.last_hall_edge_ms = nowMs;
-            s_spi.hall_edge_counter = edges;
-        }
     }
 
     /* Ramp the (absolute) target. */
@@ -220,9 +222,6 @@ void SpeedPI_Tick(uint32_t nowMs)
             s_spi.integral = 0.0f;
             s_spi.fault_retry = 0U;
         } else if (timeout) {
-            /* Boost timed out with no Hall edges — motor may not be
-             * rotating.  Allow a limited number of retries before
-             * declaring a fault. */
             if (edges == 0U) {
                 s_spi.fault_retry++;
                 if (s_spi.fault_retry >= 3U) {
@@ -231,9 +230,16 @@ void SpeedPI_Tick(uint32_t nowMs)
                     s_spi.phase = SPD_IDLE;
                     return;
                 }
+                /* Retry: go back to IDLE which re-enters START_BOOST
+                 * on the next tick with a fresh timestamp and edge
+                 * baseline.  Output is briefly zero (all-off). */
+                s_spi.computed_duty = 0U;
+                s_spi.phase = SPD_IDLE;
+            } else {
+                /* Some edges but below threshold — proceed to PI. */
+                s_spi.phase    = SPD_SPEED_PI;
+                s_spi.integral = 0.0f;
             }
-            s_spi.phase    = SPD_SPEED_PI;
-            s_spi.integral = 0.0f;
         }
         return;
     }
@@ -291,6 +297,7 @@ void SpeedPI_SetBoostPwm(uint8_t low, uint8_t mid, uint8_t high, uint16_t ms)
     s_spi.boost_low  = (low  > mx) ? mx : low;
     s_spi.boost_mid  = (mid  > mx) ? mx : mid;
     s_spi.boost_high = (high > mx) ? mx : high;
+    if (ms > 1000U) ms = 1000U;
     s_spi.boost_ms   = ms;
 }
 void SpeedPI_SetRamp(float upPerSec, float downPerSec)

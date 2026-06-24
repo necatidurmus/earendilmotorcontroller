@@ -31,8 +31,15 @@
 
 #include <string.h>
 
-/* Last sector of 512 KB flash (STM32F411CE) */
+/* Last sector of 512 KB flash (STM32F411CE).
+ * Compile-time guard: FLASH_SIZE is defined by the CMSIS header
+ * (stm32f411xe.h) as 0x80000UL for 512 KB parts.  If the build
+ * targets a smaller flash variant the address would be invalid. */
 #define FLASH_SECTOR_ADDR   0x08060000UL
+
+#if defined(FLASH_SIZE) && (FLASH_SIZE < 0x80000UL)
+#error "Storage address 0x08060000 requires STM32F411CE (512 KB flash)"
+#endif
 
 /* Hall map block at offset 0 */
 #define MAP_OFFSET          0U
@@ -110,6 +117,13 @@ bool Storage_SaveConfig(uint8_t kickDuty, uint16_t kickMs,
 
 bool Storage_LoadHallMap(uint8_t map[8])
 {
+    /* Runtime guard: verify flash size is at least 512 KB before
+     * accessing the storage sector at 0x08060000.  FLASH_SIZE_DATA_REGISTER
+     * (0x1FFF7A22) contains the flash size in KB for STM32F4. */
+#if defined(FLASH_SIZE_DATA_REGISTER)
+    uint16_t flash_kb = *(volatile uint16_t *)FLASH_SIZE_DATA_REGISTER;
+    if (flash_kb < 512U) return false;
+#endif
     const uint8_t *base = flash_ptr(MAP_OFFSET);
     uint32_t magic;
     memcpy(&magic, base, 4);
@@ -133,6 +147,10 @@ bool Storage_LoadConfig(uint8_t *kickDuty, uint16_t *kickMs,
                         uint8_t *rampStep, uint16_t *rampIntervalMs,
                         uint8_t *defaultPwm, uint16_t *brakeHoldMs)
 {
+#if defined(FLASH_SIZE_DATA_REGISTER)
+    uint16_t flash_kb = *(volatile uint16_t *)FLASH_SIZE_DATA_REGISTER;
+    if (flash_kb < 512U) return false;
+#endif
     const uint8_t *base = flash_ptr(CFG_OFFSET);
     uint32_t magic;
     memcpy(&magic, base, 4);

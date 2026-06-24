@@ -90,6 +90,7 @@ static struct {
 
     bool        has_ever_run;
     uint32_t    last_edge_count;   /* Hall edge counter snapshot */
+    uint32_t    last_edge_ms;      /* HAL_GetTick() when last edge seen */
 
     bool        verboseDebug;
     bool        queue_overflow;
@@ -165,6 +166,7 @@ static void stop_immediate(void)
      * run detects its first edge relative to now. */
     s_app.has_ever_run = false;
     s_app.last_edge_count = HallSensor_GetEdgeCounter();
+    s_app.last_edge_ms = 0U;
     /* Clear the kick/ramp state machine so the next start runs the
      * kick phase again. */
     s_app.kick_active = false;
@@ -180,6 +182,11 @@ static void stop_immediate(void)
 static bool motion_allowed(void)
 {
     return FaultManager_GetLast() == FAULT_NONE;
+}
+
+static bool service_busy(void)
+{
+    return s_app.gatetest_active || ServiceTask_IsActive();
 }
 
 static void begin_neutral_switch(int8_t new_direction)
@@ -402,6 +409,7 @@ static void handle_command(char *cmd, UartSource src)
      * Only if the motor is stopped/braked/faulted does it set
      * run_request for the STOPPED→RUNNING transition. */
     if (strcmp(cmd, "f") == 0 || strcmp(cmd, "forward") == 0) {
+        if (service_busy()) { UartProtocol_Print("\r\n[ERR] BUSY_SERVICE"); return; }
         if (!motion_allowed()) { UartProtocol_Print("\r\n[ERR] Fault latched; use clrerr"); return; }
         if (SpeedPI_IsEnabled()) SpeedPI_Disable();
         s_app.mode = MODE_DUTY;
@@ -443,6 +451,7 @@ static void handle_command(char *cmd, UartSource src)
         return;
     }
     if (strcmp(cmd, "b") == 0 || strcmp(cmd, "backward") == 0) {
+        if (service_busy()) { UartProtocol_Print("\r\n[ERR] BUSY_SERVICE"); return; }
         if (!motion_allowed()) { UartProtocol_Print("\r\n[ERR] Fault latched; use clrerr"); return; }
         if (SpeedPI_IsEnabled()) SpeedPI_Disable();
         s_app.mode = MODE_DUTY;
@@ -480,6 +489,7 @@ static void handle_command(char *cmd, UartSource src)
         return;
     }
     if (cmd[0] == 'f' && cmd[1] >= '0' && cmd[1] <= '9') {
+        if (service_busy()) { UartProtocol_Print("\r\n[ERR] BUSY_SERVICE"); return; }
         if (!motion_allowed()) { UartProtocol_Print("\r\n[ERR] Fault latched; use clrerr"); return; }
         if (SpeedPI_IsEnabled()) SpeedPI_Disable();
         char *end = NULL;
@@ -522,6 +532,7 @@ static void handle_command(char *cmd, UartSource src)
         return;
     }
     if (cmd[0] == 'b' && cmd[1] >= '0' && cmd[1] <= '9') {
+        if (service_busy()) { UartProtocol_Print("\r\n[ERR] BUSY_SERVICE"); return; }
         if (!motion_allowed()) { UartProtocol_Print("\r\n[ERR] Fault latched; use clrerr"); return; }
         if (SpeedPI_IsEnabled()) SpeedPI_Disable();
         char *end = NULL;
@@ -600,6 +611,7 @@ static void handle_command(char *cmd, UartSource src)
     bool ok = false;
     long v = parse_long_after(cmd, "pwm ", &ok);
     if (ok) {
+        if (service_busy()) { UartProtocol_Print("\r\n[ERR] BUSY_SERVICE"); return; }
         if (!motion_allowed()) { UartProtocol_Print("\r\n[ERR] Fault latched; use clrerr"); return; }
         if (v < 0)   v = 0;
         if (v > 250) v = 250;
@@ -634,6 +646,10 @@ static void handle_command(char *cmd, UartSource src)
     }
     if (strcmp(cmd, "mode duty") == 0 || strcmp(cmd, "pid off") == 0 ||
         strcmp(cmd, "mode normal") == 0) {
+        if (s_app.phase == PHASE_RUNNING || s_app.phase == PHASE_NEUTRAL) {
+            UartProtocol_Print("\r\n[ERR] Stop motor first");
+            return;
+        }
         SpeedPI_Disable();
         s_app.mode = MODE_DUTY;
         UartProtocol_Print("\r\n[OK] Mode=DUTY");
@@ -641,6 +657,10 @@ static void handle_command(char *cmd, UartSource src)
     }
     if (strcmp(cmd, "mode speed") == 0 || strcmp(cmd, "pid on") == 0 ||
         strcmp(cmd, "mode control") == 0) {
+        if (s_app.phase == PHASE_RUNNING || s_app.phase == PHASE_NEUTRAL) {
+            UartProtocol_Print("\r\n[ERR] Stop motor first");
+            return;
+        }
         SpeedPI_Enable();
         s_app.mode = MODE_SPEED;
         UartProtocol_Print("\r\n[OK] Mode=SPEED");
@@ -657,6 +677,7 @@ static void handle_command(char *cmd, UartSource src)
     }
     v = parse_long_after(cmd, "rpm ", &ok);
     if (ok) {
+        if (v != 0 && service_busy()) { UartProtocol_Print("\r\n[ERR] BUSY_SERVICE"); return; }
         if (v == 0) {
             if (SpeedPI_IsEnabled()) SpeedPI_Disable();
             stop_immediate();
@@ -664,33 +685,34 @@ static void handle_command(char *cmd, UartSource src)
             return;
         }
         if (!motion_allowed()) { UartProtocol_Print("\r\n[ERR] Fault latched; use clrerr"); return; }
-        /* Clamp |RPM| to MAX_RPM_TARGET to avoid a typo commanding
-         * a dangerous speed.  Bring-up is low-RPM only. */
         if (v > MAX_RPM_TARGET)  v = MAX_RPM_TARGET;
         if (v < -MAX_RPM_TARGET) v = -MAX_RPM_TARGET;
+
+        int8_t new_dir = (v > 0) ? +1 : -1;
+        /* Capture the real running direction BEFORE overwriting
+         * s_app.direction.  In duty mode SpeedPI_GetRawTargetRpm()
+         * may be 0, so use s_app.direction as the authoritative
+         * source of the current physical direction. */
+        int8_t old_dir = (int8_t)s_app.direction;
+
         if (!SpeedPI_IsEnabled()) {
             SpeedPI_Enable();
             s_app.mode = MODE_SPEED;
         }
-        int8_t new_dir = (v > 0) ? +1 : -1;
-        int8_t cur_dir = (SpeedPI_GetRawTargetRpm() > 0) ? +1 :
-                         (SpeedPI_GetRawTargetRpm() < 0) ? -1 : 0;
         SpeedPI_SetTargetRpm((int32_t)v);
-        s_app.direction = (v > 0) ? DIR_FWD : DIR_REV;
         s_app.last_motor_cmd_ms = HAL_GetTick();
-        if (cur_dir != 0 && new_dir != cur_dir) {
-            /* Direction reversal while running — neutral switch. */
+
+        if (s_app.phase == PHASE_RUNNING && old_dir != 0 && new_dir != old_dir) {
+            /* Direction reversal while running — neutral switch.
+             * s_app.direction is set by begin_neutral_switch via
+             * pending_direction after the neutral period. */
             begin_neutral_switch(new_dir);
-        } else if (s_app.phase == PHASE_RUNNING && new_dir == (int8_t)s_app.direction) {
-            /* ISSUE-045: already running in this direction — heartbeat
-             * only.  The SpeedPI target was already updated above.
-             * Do NOT set run_request (it would reset phase_start_ms
-             * and restart kick via the run_request handler).  The
-             * Hall startup timeout (phase_start_ms) must NOT be
-             * refreshed by heartbeat commands. */
+        } else if (s_app.phase == PHASE_RUNNING && new_dir == old_dir) {
+            /* Already running same direction — heartbeat. */
+            s_app.direction = (v > 0) ? DIR_FWD : DIR_REV;
         } else {
-            /* Motor stopped / not yet running — request the
-             * STOPPED→RUNNING transition. */
+            /* Stopped / not yet running — request start. */
+            s_app.direction = (v > 0) ? DIR_FWD : DIR_REV;
             s_app.run_request = true;
             s_app.stop_request = false;
         }
@@ -872,9 +894,16 @@ static void handle_command(char *cmd, UartSource src)
         }
         uint8_t map[8];
         if (Storage_LoadHallMap(map)) {
-            for (uint8_t i = 0; i < 8; i++)
-                Commutation_SetMapEntry(i, map[i]);
-            UartProtocol_Print("\r\n[OK] Hall map loaded from flash");
+            bool all_ok = true;
+            for (uint8_t i = 0; i < 8; i++) {
+                if (!Commutation_SetMapEntry(i, map[i])) { all_ok = false; break; }
+            }
+            if (all_ok) {
+                UartProtocol_Print("\r\n[OK] Hall map loaded from flash");
+            } else {
+                Commutation_LoadDefaultMap();
+                UartProtocol_Print("\r\n[ERR] Flash map entry rejected, defaults restored");
+            }
         } else {
             Commutation_LoadDefaultMap();
             UartProtocol_Print("\r\n[INFO] No saved map, defaults loaded");
@@ -885,6 +914,7 @@ static void handle_command(char *cmd, UartSource src)
 
     /* --- identify / scan / test --- */
     if (strcmp(cmd, "identify") == 0) {
+        if (service_busy()) { UartProtocol_Print("\r\n[ERR] BUSY_SERVICE"); return; }
         if (!motion_allowed()) { UartProtocol_Print("\r\n[ERR] Fault latched; use clrerr"); return; }
         if (s_app.phase != PHASE_STOPPED && s_app.phase != PHASE_FAULT) {
             UartProtocol_Print("\r\n[ERR] Stop motor first");
@@ -894,6 +924,7 @@ static void handle_command(char *cmd, UartSource src)
         return;
     }
     if (strcmp(cmd, "scan") == 0) {
+        if (service_busy()) { UartProtocol_Print("\r\n[ERR] BUSY_SERVICE"); return; }
         if (!motion_allowed()) { UartProtocol_Print("\r\n[ERR] Fault latched; use clrerr"); return; }
         if (s_app.phase != PHASE_STOPPED && s_app.phase != PHASE_FAULT) {
             UartProtocol_Print("\r\n[ERR] Stop motor first");
@@ -903,6 +934,7 @@ static void handle_command(char *cmd, UartSource src)
         return;
     }
     if (strcmp(cmd, "test") == 0) {
+        if (service_busy()) { UartProtocol_Print("\r\n[ERR] BUSY_SERVICE"); return; }
         if (!motion_allowed()) { UartProtocol_Print("\r\n[ERR] Fault latched; use clrerr"); return; }
         if (s_app.phase != PHASE_STOPPED && s_app.phase != PHASE_FAULT) {
             UartProtocol_Print("\r\n[ERR] Stop motor first");
@@ -1042,13 +1074,33 @@ static void handle_command(char *cmd, UartSource src)
     /* --- status --- */
     if (strcmp(cmd, "status") == 0) { print_status(); return; }
 
-    /* --- clrerr --- */
+    /* --- clrerr ---
+     * Clear faults AND force app state to safe STOPPED so the motor
+     * cannot auto-restart on a stale run_request or phase. */
     if (strcmp(cmd, "clrerr") == 0) {
         FaultManager_Clear();
         HallSensor_ClearFault();
         s_app.queue_overflow = false;
         UartProtocol_ResetTxDropCount();
-        UartProtocol_Print("\r\n[OK] Errors cleared");
+        UartProtocol_ResetCmdDropCount();
+        s_app.phase = PHASE_STOPPED;
+        s_app.direction = (Direction)0;
+        s_app.target_duty = 0U;
+        s_app.current_duty = 0U;
+        s_app.run_request = false;
+        s_app.stop_request = false;
+        s_app.duty_update_request = false;
+        s_app.last_motor_cmd_ms = 0U;
+        s_app.has_ever_run = false;
+        s_app.last_edge_count = HallSensor_GetEdgeCounter();
+        s_app.last_edge_ms = 0U;
+        s_app.kick_active = false;
+        s_app.kick_start_ms = 0U;
+        s_app.ramp_current_duty = 0U;
+        s_app.last_ramp_update_ms = 0U;
+        MotorDriver_AllOff();
+        SpeedPI_Disable();
+        UartProtocol_Print("\r\n[OK] Errors cleared, motor stopped");
         return;
     }
 
@@ -1089,6 +1141,28 @@ static void service_motor(void)
      * service/gate-test outputs untouched. */
     if (s_app.gatetest_active) return;
     if (ServiceTask_IsActive()) return;
+
+    /* Central fault guard: if any fault is latched, force the motor
+     * to a safe state immediately.  This catches faults raised from
+     * ISR context (e.g. App_Tim1BrkIsr) or from any other path where
+     * the app state was not explicitly brought to STOPPED/FAULT. */
+    if (FaultManager_GetLast() != FAULT_NONE) {
+        MotorDriver_AllOff();
+        SpeedPI_Disable();
+        s_app.phase = PHASE_FAULT;
+        s_app.direction = (Direction)0;
+        s_app.target_duty = 0U;
+        s_app.current_duty = 0U;
+        s_app.run_request = false;
+        s_app.stop_request = false;
+        s_app.duty_update_request = false;
+        s_app.last_motor_cmd_ms = 0U;
+        s_app.kick_active = false;
+        s_app.kick_start_ms = 0U;
+        s_app.ramp_current_duty = 0U;
+        s_app.last_ramp_update_ms = 0U;
+        return;
+    }
 
     /* ISSUE-010: Surface SpeedPI internal faults through the central
      * FaultManager so telemetry FC and the safety path react. */
@@ -1190,6 +1264,13 @@ static void service_motor(void)
             s_app.phase = PHASE_RUNNING;
             s_app.direction = (Direction)req_dir;
             s_app.phase_start_ms = HAL_GetTick();
+            /* Reset Hall edge baseline so each start gets its own
+             * startup timeout window.  Without this, stale edges from
+             * a previous run or manual wheel rotation could bypass
+             * the START_NO_HALL_TIMEOUT_MS check. */
+            s_app.has_ever_run = false;
+            s_app.last_edge_count = HallSensor_GetEdgeCounter();
+            s_app.last_edge_ms = HAL_GetTick();
             /* Arm kick/ramp only on the real STOPPED→RUNNING transition.
              * This is the sole place kick is started; heartbeat commands
              * and mid-run duty changes do not reach here. */
@@ -1221,6 +1302,12 @@ static void service_motor(void)
             s_app.direction = (Direction)s_app.pending_direction;
             s_app.phase = PHASE_RUNNING;
             s_app.phase_start_ms = HAL_GetTick();
+            /* Reset Hall edge baseline after direction reversal.
+             * Without this, stale edges from the previous direction
+             * could bypass the startup timeout or duty Hall loss check. */
+            s_app.has_ever_run = false;
+            s_app.last_edge_count = HallSensor_GetEdgeCounter();
+            s_app.last_edge_ms = HAL_GetTick();
         }
         return;
     }
@@ -1323,6 +1410,7 @@ static void service_motor(void)
         if (edges != s_app.last_edge_count) {
             s_app.last_edge_count = edges;
             s_app.has_ever_run = true;
+            s_app.last_edge_ms = HAL_GetTick();
         }
 
         if (HallSensor_GetFreshness() == HALL_STALE) {
@@ -1338,6 +1426,13 @@ static void service_motor(void)
                 FaultManager_Raise(FAULT_NO_HALL);
                 stop_immediate();
                 UartProtocol_Print("\r\n[ERR] Hall lost in speed mode");
+            } else if (!SpeedPI_IsEnabled() &&
+                       s_app.target_duty > 0U &&
+                       s_app.has_ever_run &&
+                       (HAL_GetTick() - s_app.last_edge_ms) > DUTY_HALL_LOSS_TIMEOUT_MS) {
+                FaultManager_Raise(FAULT_NO_HALL);
+                stop_immediate();
+                UartProtocol_Print("\r\n[ERR] Hall lost in duty mode");
             }
         }
     }

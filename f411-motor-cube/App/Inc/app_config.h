@@ -105,11 +105,13 @@
  * These mirror the Arduino firmware values to keep compatibility
  * with the old bring-up tests. */
 #define HALL_STABLE_SAMPLES              2U
+#define HALL_DEBOUNCE_US                 50U
 #define INVALID_HALL_STOP_US             100000U  /* 100 ms */
 #define START_NO_HALL_TIMEOUT_MS         700U
 #define INVALID_TRANSITION_THRESHOLD     50U
 #define DIRECTION_NEUTRAL_MS             80U
 #define RPM_FEEDBACK_TIMEOUT_MS          5000U
+#define DUTY_HALL_LOSS_TIMEOUT_MS        1500U
 #define CMD_WATCHDOG_MS                  800U
 #define HOST_DISCONNECT_TIMEOUT_MS       2000U
 #define BRAKE_HOLD_MS                    3000U
