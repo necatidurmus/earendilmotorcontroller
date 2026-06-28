@@ -1,0 +1,43 @@
+# PlatformIO / build artifacts — must never be committed or zipped.
+.pio/
+.pioenvs/
+.piolibdeps/
+.vscode/
+__pycache__/
+*.pyc
+*.pyo
+.cache/
+
+# STM32CubeIDE
+.metadata/
+**/.metadata/
+
+# Embedded git repos
+ref/f411-motor-cube-monolithic
+
+# Compiled binaries / objects
+*.elf
+*.bin
+*.hex
+*.map
+*.o
+*.a
+*.d
+*.lst
+
+# Eclipse / STM32CubeIDE build output
+Debug/
+
+# CubeMX backup files
+*.ioc.bak
+*.bak
+
+# Editor / OS
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Release artifacts (firmware.bin shared separately)
+firmware.bin
+*.zip

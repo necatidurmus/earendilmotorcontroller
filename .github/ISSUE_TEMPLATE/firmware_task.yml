@@ -1,0 +1,37 @@
+name: Firmware task
+description: A development task on the firmware (not a bug report or safety event)
+labels: ["task"]
+body:
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective
+    validations:
+      required: true
+  - type: textarea
+    id: affected_files
+    attributes:
+      label: Affected files
+      placeholder: "App/Src/motor_driver.c, docs/TIM1_GATE_DRIVE.md"
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+    validations:
+      required: true
+  - type: textarea
+    id: tests
+    attributes:
+      label: Tests required
+      description: Build command, scope checks, protocol round-trips, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: safety_impact
+    attributes:
+      label: Safety impact
+      description: Does this touch the TIM1 gate hot path, break policy, Hall timestamp, or fault handling? Reference docs/TIM1_GATE_DRIVE.md if so.
+    validations:
+      required: true

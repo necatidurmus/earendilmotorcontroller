@@ -1,0 +1,12 @@
+.pio/
+*.elf
+*.bin
+*.o
+*.map
+*.lst
+*.hex
+*.srec
+.vscode/
+.idea/
+*.swp
+*~

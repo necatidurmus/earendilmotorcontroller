@@ -1,0 +1,61 @@
+name: Hardware safety issue
+description: PSU current-limit, shoot-through, unexpected gate drive, break event, or any event that could damage hardware. STOP testing and file this.
+labels: ["safety", "stop-the-line"]
+body:
+  - type: textarea
+    id: psu_behavior
+    attributes:
+      label: PSU behaviour
+      description: Current-limit trip? Short? Voltage collapse? Did you disconnect the motor?
+    validations:
+      required: true
+  - type: textarea
+    id: gate_signals
+    attributes:
+      label: Gate signals observed (scope)
+      description: Which phase? Overlap? Wrong pin? allOff not clearing?
+    validations:
+      required: true
+  - type: input
+    id: hall_state
+    attributes:
+      label: Hall state
+      placeholder: "e.g. H=0 (0b000) during rotation"
+    validations:
+      required: true
+  - type: input
+    id: command_active
+    attributes:
+      label: Command active
+      placeholder: "e.g. f20 / rpm 10 / stop"
+    validations:
+      required: true
+  - type: input
+    id: duty_rpm
+    attributes:
+      label: Duty / RPM at the time
+      placeholder: "duty 20 / ~15 RPM"
+    validations:
+      required: true
+  - type: dropdown
+    id: motor_connected
+    attributes:
+      label: Motor connected?
+      options:
+        - "Yes"
+        - "No"
+    validations:
+      required: true
+  - type: textarea
+    id: immediate_stop
+    attributes:
+      label: Immediate stop condition
+      description: What did you do to make it safe? (cut PSU, disconnect motor, etc.)
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Firmware commit
+    validations:
+      required: true
