@@ -25,6 +25,8 @@ typedef enum {
     SPD_FAULT_INVALID_HALL = 2
 } SpeedFault;
 
+#define SPEED_PI_BAND_COUNT 8U
+
 void SpeedPI_Init(void);
 void SpeedPI_Reset(void);
 void SpeedPI_Enable(void);
@@ -47,13 +49,13 @@ SpeedFault SpeedPI_GetFault(void);
 float SpeedPI_GetK(void);
 void SpeedPI_SetKp(float kp);
 void SpeedPI_SetKi(float ki);
-void SpeedPI_SetBasePwm(uint16_t low, uint16_t mid, uint16_t high);
-void SpeedPI_SetBoostPwm(uint16_t low, uint16_t mid, uint16_t high, uint16_t ms);
+void SpeedPI_SetBasePwm(const uint16_t bands[SPEED_PI_BAND_COUNT]);
+void SpeedPI_SetBoostPwm(const uint16_t bands[SPEED_PI_BAND_COUNT], uint16_t ms);
 void SpeedPI_SetRamp(float upPerSec, float downPerSec);
 
 void SpeedPI_GetGains(float *kp, float *ki);
-void SpeedPI_GetBasePwm(uint16_t *low, uint16_t *mid, uint16_t *high);
-void SpeedPI_GetBoostPwm(uint16_t *low, uint16_t *mid, uint16_t *high, uint16_t *ms);
+void SpeedPI_GetBasePwm(uint16_t bands[SPEED_PI_BAND_COUNT]);
+void SpeedPI_GetBoostPwm(uint16_t bands[SPEED_PI_BAND_COUNT], uint16_t *ms);
 void SpeedPI_GetRampRates(float *up, float *down);
 
 #ifdef __cplusplus

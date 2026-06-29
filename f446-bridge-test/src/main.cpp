@@ -25,6 +25,8 @@ static uint32_t serviceUnlockMs = 0;
 static uint32_t blockedCmdCount = 0;
 static uint32_t lastBlinkMs  = 0;
 static bool     ledState     = false;
+static bool     delayedStopPending = false;
+static uint32_t delayedStopDeadlineMs = 0;
 
 static bool strEqNoCase(const char* a, const char* b) {
     while (*a && *b) {
@@ -65,10 +67,8 @@ static void normalStopAll() {
     for (size_t i = 0; i < MOTOR_COUNT; i++) {
         sendToMotor(i, "rpm 0");
     }
-    delay(SAFE_STOP_DELAY_MS);
-    for (size_t i = 0; i < MOTOR_COUNT; i++) {
-        sendToMotor(i, "stop");
-    }
+    delayedStopPending = true;
+    delayedStopDeadlineMs = millis() + SAFE_STOP_DELAY_MS;
     serviceUnlocked = false;
 }
 
@@ -78,11 +78,18 @@ static void coastStopAll() {
     for (size_t i = 0; i < MOTOR_COUNT; i++) {
         sendToMotor(i, "safe");
     }
-    delay(SAFE_STOP_DELAY_MS);
+    delayedStopPending = true;
+    delayedStopDeadlineMs = millis() + SAFE_STOP_DELAY_MS;
+    serviceUnlocked = false;
+}
+
+static void serviceDelayedStop() {
+    if (!delayedStopPending) return;
+    if ((int32_t)(millis() - delayedStopDeadlineMs) < 0) return;
+    delayedStopPending = false;
     for (size_t i = 0; i < MOTOR_COUNT; i++) {
         sendToMotor(i, "stop");
     }
-    serviceUnlocked = false;
 }
 
 static bool isValidFDuty(const char* cmd) {
@@ -177,10 +184,10 @@ static void printHelp() {
     Serial.println("  all <cmd>            -> send <cmd> to all motors");
     Serial.println("  stop                 -> normal stop: rpm 0 + stop (no fault)");
     Serial.println("  safe / alloff        -> coast stop (motor coasts, no fault latch)");
-    Serial.println("  estop                -> fault-latched emergency stop (clrerr required)");
+    Serial.println("  estop                -> emergency all-off; next motion command may clear fault");
     Serial.println("Direct F411 passthrough examples:");
     Serial.println("  f50, b50, rpm 30, rpm -30, mode duty, mode speed, hall, status");
-    Serial.println("  x/brake (coast stop), kick on/off, ramp on/off, defaults");
+    Serial.println("  x/brake (ACTIVE BRAKE; current-limited PSU), kick on/off, ramp on/off");
     Serial.println("Service commands (requires bridge unlock_service + F411 arming):");
     Serial.println("  m1 identify, m1 scan, m1 test, m1 gatetest, m1 save, m1 loadcfg");
 }
@@ -218,12 +225,14 @@ static void handlePcLine(char* line) {
     }
 
     if (strEqNoCase(line, "estop")) {
-        /* Fault-latched emergency stop: send real estop to F411. */
+        /* Emergency all-off.  Current F411 policy allows a subsequent
+         * motion command to clear the displayed fault and restart. */
+        delayedStopPending = false;
         for (size_t i = 0; i < MOTOR_COUNT; i++) {
             sendToMotor(i, "estop");
         }
         serviceUnlocked = false;
-        Serial.println("OK|estop sent (fault-latched, clrerr required)");
+        Serial.println("OK|estop sent (next motion command may clear fault)");
         return;
     }
 
@@ -434,6 +443,7 @@ void loop() {
         pumpMotorPort(i);
     }
     heartbeatLed();
+    serviceDelayedStop();
     /* Auto-disarm service unlock */
     if (serviceUnlocked && (millis() - serviceUnlockMs) >= SERVICE_TIMEOUT_MS) {
         serviceUnlocked = false;

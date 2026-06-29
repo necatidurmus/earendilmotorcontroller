@@ -4,6 +4,73 @@ Agent task history. Newest entries on top.
 
 ---
 
+## 2026-06-28 — Implement 8-band base/boost PI tuning
+- **Purpose:** Replace the 3-band model with 8 base values, 8 boost values, and one shared boost duration.
+- **Read:** Speed PI, config/query/status handlers, F446 GUI/bridge, protocol and bring-up docs.
+- **Changed:** Added equal 0..500 RPM band selection, strict 8/8+1 commands, GUI fields/read-back, and synchronized docs.
+- **Why:** The required tuning model is 8 base + 8 boost + one shared ms value.
+- **Build/test:** F411 and F446 PlatformIO builds SUCCESS; GUI/smoke-test `py_compile` SUCCESS; parser regex check and diff check clean.
+- **Remaining risks:** Default band values and RPM transitions require current-limited bench tuning; no hardware verification performed.
+
+## 2026-06-28 — Repair F446 bridge and GUI protocol behavior
+- **Purpose:** Fix F446/GUI regressions against the frozen F411 protocol.
+- **Read:** F446 firmware/config/README, GUI, smoke test, F411 protocol.
+- **Changed:** Non-blocking delayed stop; prefixed PI read-back parsing; corrected brake, estop, and telemetry documentation.
+- **Why:** GUI could not parse `M1|` PI responses, stop paths blocked UART, and safety text contradicted current F411 behavior.
+- **Build/test:** `pio run -d f446-bridge-test` SUCCESS; GUI and smoke test `py_compile` SUCCESS; diff check clean.
+- **Remaining risks:** Serial integration and hardware behavior are not bench-verified.
+
+## 2026-06-28 — Restore F411 build and service safety guards
+- **Purpose:** Repair regressions introduced by the unfinished 8-band PI change.
+- **Read:** Memory bank, safety/bring-up/protocol/TIM1 docs, changed F411 modules.
+- **Changed:** Restored the frozen 3-band PI/GUI protocol; restored service/gate arming; removed blocking direct gate debug commands; restored 100 ms gate-test timeout.
+- **Why:** Firmware did not compile and gate-driving service commands bypassed required safety controls.
+- **Build/test:** `pio run -d f411-motor-cube` SUCCESS; `python -m py_compile tools/f446_motor_gui.py` SUCCESS; two pre-existing unused-function warnings in `motor_driver.c`.
+- **Remaining risks:** Hardware not tested; motor-disconnected scope verification remains mandatory.
+
+## 2026-06-28 — Update F411 Speed PI defaults to tested GUI values (Kp=0.25, Ki=0.05)
+
+- **Purpose:** Update PI tuning defaults to match tested GUI values: Kp=0.25 (250x10⁻³), Ki=0.05 (50x10⁻³).
+- **Read:** `app_config.h`, `speed_pi.c`.
+- **Changed:**
+  - `App/Inc/app/app_config.h` — `DEFAULT_SPEED_KP` = 0.25f (was 10.0f), `DEFAULT_SPEED_KI` = 0.05f (was 10.0f).
+- **Why:** GUI-tested values (Kp_m=250, Ki_m=50) provide reliable motor control; max clamp remains 50.0.
+- **Build/test:** `pio run -d f411-motor-cube` SUCCESS (RAM 2.2 %, Flash 9.7 %).
+
+## 2026-06-28 — Update F446 Motor GUI to support 8-band PI tuning parameters
+
+- **Purpose:** Update F446 GUI to properly display and apply 8-band base and boost PWM parameters from F411 firmware.
+- **Read:** `tools/f446_motor_gui.py`, `f411-motor-cube/App/Src/command/command_handlers_query.c`.
+- **Changed:**
+  - `tools/f446_motor_gui.py` — Updated `_build_pi_panel()` to show 8 base bands and 8 boost bands (each band has lo/mid/hi/ms = 4 values, 8 bands × 4 = 32 total boost fields)
+  - `tools/f446_motor_gui.py` — Updated `_apply_pi()` to send 8-band base and boost parameters
+  - `tools/f446_motor_gui.py` — Updated `_handle_line()` to parse 8-band spstat output from firmware
+  - `f411-motor-cube/App/Src/command/command_handlers_query.c` — Updated `spstat` command to output 8-band base/boost values
+- **Why 32 boost values?:** The firmware uses 8 bands for each of boost_low, boost_mid, boost_high, and boost_ms arrays (4×8=32 values). This allows different boost timing (ms) per RPM band, which is technically sound as higher RPM bands may require longer boost durations. The default values show increasing ms times for higher bands (500ms→1200ms).
+- **Build/test:** 
+  - Firmware: `pio run -d f411-motor-cube` SUCCESS (RAM 2.2%, Flash 9.7%)
+  - GUI: `python3 -m py_compile tools/f446_motor_gui.py` SUCCESS
+- **Read:** `speed_pi.c`, `app_config.h`.
+- **Changed:**
+  - `App/Src/motor/speed_pi.c` — `clampf` max limit `10.0f` → `50.0f` for both Kp and Ki.
+  - `App/Inc/app/app_config.h` — `DEFAULT_SPEED_KP` = 10.0f, `DEFAULT_SPEED_KI` = 2.0f (keeps 5:1 ratio with new tested defaults).
+- **Why:** GUI showed need for stronger PI (Kp_m=10000 equivalent). Raising max clamp to 50 gives headroom; default 10/2 keeps the same proportional integral ratio (5:1) as prior tested settings.
+- **Build/test:** `pio run -d f411-motor-cube` SUCCESS (RAM 2.1 %, Flash 9.7 %).
+- **Remaining risks:** High Kp values at very low speeds can cause oscillation; tested GUI values were used in final tuning.
+
+---
+
+## 2026-06-28 — Update F411 Speed PI default tuning values to match tested GUI settings
+
+- **Purpose:** Update F411 firmware default PI / base / boost / ramp values to tested GUI defaults.
+- **Read:** `app_config.h`, `speed_pi.c`, `command_handlers_config.c`, `storage.c`.
+- **Changed:** `App/Inc/app/app_config.h` — updated `DEFAULT_SPEED_KP`, `DEFAULT_SPEED_KI`, `DEFAULT_BASE_PWM_*`, `DEFAULT_BOOST_*`, `DEFAULT_RAMP_*` defaults; added comment noting GUI alignment.
+- **Why:** GUI-tested values proved reliable; previous conservative defaults (base low=640, Kp=0.8) were too weak for the hub motor. New values: Kp=0.25 (GUI 250), Ki=0.05 (GUI 50), Base=250/1000/1500, Boost=1000/2000/3000 ms=1000, Ramp=1000/1000 RPM/s.
+- **Build/test:** `pio run -d f411-motor-cube` SUCCESS (RAM 2.1 %, Flash 9.7 %). No code changes outside `app_config.h`.
+- **Remaining risks:** None — only RAM defaults changed; runtime `pi`/`base`/`boost`/`ramp` commands, `spstat`/`status` telemetry, and storage load-path remain unchanged.
+
+---
+
 ## 2026-06-27 — Add UART RX diagnostics to isolate command failure (after 4000 PWM switch)
 
 - **Purpose:** F411 still does not accept commands via F446 after 4000 PWM change and DMA watchdog. Need to know if bytes even reach the F411.

@@ -21,6 +21,22 @@
 #include <stdlib.h>
 #include <math.h>
 
+static bool parse_u16_values(const char *text, uint16_t *values,
+                             uint8_t count, uint16_t maximum)
+{
+    const char *p = text;
+    for (uint8_t i = 0U; i < count; i++) {
+        while (*p == ' ') p++;
+        char *end = NULL;
+        long value = strtol(p, &end, 10);
+        if (end == p || value < 0L || value > (long)maximum) return false;
+        values[i] = (uint16_t)value;
+        p = end;
+    }
+    while (*p == ' ') p++;
+    return *p == '\0';
+}
+
 bool CommandHandlers_Config_Handle(char *cmd)
 {
     AppState *s = AppState_Get();
@@ -70,75 +86,43 @@ bool CommandHandlers_Config_Handle(char *cmd)
         SpeedPI_SetKi(fv); UartProtocol_Printf("\r\n[OK] Ki_m=%ld", (long)(fv * 1000.0f)); return true;
     }
 
-    /* --- base <lo> <mid> <hi> --- */
+    /* --- base <b1> ... <b8> --- */
     if (AppUtils_StartsWith(cmd, "base ")) {
         if (s->phase == PHASE_RUNNING || s->phase == PHASE_NEUTRAL) {
             UartProtocol_Print("\r\n[ERR] Stop motor first");
             return true;
         }
-        const char *p = cmd + 5;
-        while (*p == ' ') p++;
-        char *e1 = NULL, *e2 = NULL, *e3 = NULL;
-        long lo  = strtol(p, &e1, 10);
-        if (e1 == p) { UartProtocol_Print("\r\n[ERR] Usage: base <lo> <mid> <hi>"); return true; }
-        while (*e1 == ' ') e1++;
-        long mid = strtol(e1, &e2, 10);
-        if (e2 == e1) { UartProtocol_Print("\r\n[ERR] Usage: base <lo> <mid> <hi>"); return true; }
-        while (*e2 == ' ') e2++;
-        long hi  = strtol(e2, &e3, 10);
-        if (e3 == e2) { UartProtocol_Print("\r\n[ERR] Usage: base <lo> <mid> <hi>"); return true; }
-        while (*e3 == ' ') e3++;
-        if (*e3 != '\0') { UartProtocol_Print("\r\n[ERR] Trailing garbage"); return true; }
-        if (lo < 0) lo = 0;
-        if (lo > PWM_MAX_DUTY) lo = PWM_MAX_DUTY;
-        if (mid < 0) mid = 0;
-        if (mid > PWM_MAX_DUTY) mid = PWM_MAX_DUTY;
-        if (hi < 0) hi = 0;
-        if (hi > PWM_MAX_DUTY) hi = PWM_MAX_DUTY;
-        SpeedPI_SetBasePwm((uint16_t)lo, (uint16_t)mid, (uint16_t)hi);
-        uint16_t alo, amid, ahi;
-        SpeedPI_GetBasePwm(&alo, &amid, &ahi);
-        UartProtocol_Printf("\r\n[OK] Base L=%u M=%u H=%u",
-                            (unsigned)alo, (unsigned)amid, (unsigned)ahi);
+        uint16_t bands[SPEED_PI_BAND_COUNT];
+        if (!parse_u16_values(cmd + 5, bands, SPEED_PI_BAND_COUNT, PWM_MAX_DUTY)) {
+            UartProtocol_Print("\r\n[ERR] Usage: base <b1> <b2> <b3> <b4> <b5> <b6> <b7> <b8>");
+            return true;
+        }
+        SpeedPI_SetBasePwm(bands);
+        UartProtocol_Print("\r\n[OK] Base");
+        for (uint8_t i = 0U; i < SPEED_PI_BAND_COUNT; i++) {
+            UartProtocol_Printf(" %u", (unsigned)bands[i]);
+        }
         return true;
     }
 
-    /* --- boost <lo> <mid> <hi> <ms> --- */
+    /* --- boost <b1> ... <b8> <ms> --- */
     if (AppUtils_StartsWith(cmd, "boost ")) {
         if (s->phase == PHASE_RUNNING || s->phase == PHASE_NEUTRAL) {
             UartProtocol_Print("\r\n[ERR] Stop motor first");
             return true;
         }
-        const char *p = cmd + 6;
-        while (*p == ' ') p++;
-        char *e1 = NULL, *e2 = NULL, *e3 = NULL, *e4 = NULL;
-        long lo  = strtol(p, &e1, 10);
-        if (e1 == p) { UartProtocol_Print("\r\n[ERR] Usage: boost <lo> <mid> <hi> <ms>"); return true; }
-        while (*e1 == ' ') e1++;
-        long mid = strtol(e1, &e2, 10);
-        if (e2 == e1) { UartProtocol_Print("\r\n[ERR] Usage: boost <lo> <mid> <hi> <ms>"); return true; }
-        while (*e2 == ' ') e2++;
-        long hi  = strtol(e2, &e3, 10);
-        if (e3 == e2) { UartProtocol_Print("\r\n[ERR] Usage: boost <lo> <mid> <hi> <ms>"); return true; }
-        while (*e3 == ' ') e3++;
-        long ms  = strtol(e3, &e4, 10);
-        if (e4 == e3) { UartProtocol_Print("\r\n[ERR] Usage: boost <lo> <mid> <hi> <ms>"); return true; }
-        while (*e4 == ' ') e4++;
-        if (*e4 != '\0') { UartProtocol_Print("\r\n[ERR] Trailing garbage"); return true; }
-        if (lo < 0) lo = 0;
-        if (lo > PWM_MAX_DUTY) lo = PWM_MAX_DUTY;
-        if (mid < 0) mid = 0;
-        if (mid > PWM_MAX_DUTY) mid = PWM_MAX_DUTY;
-        if (hi < 0) hi = 0;
-        if (hi > PWM_MAX_DUTY) hi = PWM_MAX_DUTY;
-        if (ms < 0) ms = 0;
-        if (ms > 1000) ms = 1000;
-        SpeedPI_SetBoostPwm((uint16_t)lo, (uint16_t)mid, (uint16_t)hi, (uint16_t)ms);
-        uint16_t alo, amid, ahi;
-        uint16_t ams;
-        SpeedPI_GetBoostPwm(&alo, &amid, &ahi, &ams);
-        UartProtocol_Printf("\r\n[OK] Boost L=%u M=%u H=%u ms=%u",
-                            (unsigned)alo, (unsigned)amid, (unsigned)ahi, (unsigned)ams);
+        uint16_t values[SPEED_PI_BAND_COUNT + 1U];
+        if (!parse_u16_values(cmd + 6, values, SPEED_PI_BAND_COUNT + 1U, PWM_MAX_DUTY) ||
+            values[SPEED_PI_BAND_COUNT] > 1000U) {
+            UartProtocol_Print("\r\n[ERR] Usage: boost <b1> <b2> <b3> <b4> <b5> <b6> <b7> <b8> <ms>");
+            return true;
+        }
+        SpeedPI_SetBoostPwm(values, values[SPEED_PI_BAND_COUNT]);
+        UartProtocol_Print("\r\n[OK] Boost");
+        for (uint8_t i = 0U; i < SPEED_PI_BAND_COUNT; i++) {
+            UartProtocol_Printf(" %u", (unsigned)values[i]);
+        }
+        UartProtocol_Printf(" ms=%u", (unsigned)values[SPEED_PI_BAND_COUNT]);
         return true;
     }
 

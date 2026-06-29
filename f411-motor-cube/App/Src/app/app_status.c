@@ -26,11 +26,11 @@ void AppStatus_PrintStatus(void)
     uint8_t  candc= HallSensor_GetCandidateCount();
     float    kp, ki;
     SpeedPI_GetGains(&kp, &ki);
-    uint16_t blo, bmid, bhi;
-    SpeedPI_GetBasePwm(&blo, &bmid, &bhi);
-    uint16_t stlo, stmid, sthi;
+    uint16_t base[SPEED_PI_BAND_COUNT];
+    SpeedPI_GetBasePwm(base);
+    uint16_t boost[SPEED_PI_BAND_COUNT];
     uint16_t stms;
-    SpeedPI_GetBoostPwm(&stlo, &stmid, &sthi, &stms);
+    SpeedPI_GetBoostPwm(boost, &stms);
     float rup, rdown;
     SpeedPI_GetRampRates(&rup, &rdown);
 
@@ -52,8 +52,15 @@ void AppStatus_PrintStatus(void)
     UartProtocol_Printf("\r\nPI Tcmd=%ld Trmp=%d F=%d", (long)tcmd, (int)trmp, (int)frpm);
     UartProtocol_Printf("\r\nPI Kp_m=%ld Ki_m=%ld",
         (long)(kp * 1000.0f), (long)(ki * 1000.0f));
-    UartProtocol_Printf("\r\nBase %u/%u/%u", (unsigned)blo, (unsigned)bmid, (unsigned)bhi);
-    UartProtocol_Printf("\r\nBoost %u/%u/%u ms=%u", (unsigned)stlo, (unsigned)stmid, (unsigned)sthi, (unsigned)stms);
+    UartProtocol_Print("\r\nBase");
+    for (uint8_t i = 0U; i < SPEED_PI_BAND_COUNT; i++) {
+        UartProtocol_Printf(" %u", (unsigned)base[i]);
+    }
+    UartProtocol_Print("\r\nBoost");
+    for (uint8_t i = 0U; i < SPEED_PI_BAND_COUNT; i++) {
+        UartProtocol_Printf(" %u", (unsigned)boost[i]);
+    }
+    UartProtocol_Printf(" ms=%u", (unsigned)stms);
     UartProtocol_Printf("\r\nRamp up=%ld down=%ld", (long)rup, (long)rdown);
     UartProtocol_Printf("\r\nDuty: target=%u current=%u default=%u kick=%u/%u ramp_step=%u/%u",
         (unsigned)s->target_duty, (unsigned)s->current_duty,
@@ -123,8 +130,8 @@ void AppStatus_PrintHelp(void)
         "\r\n rpm <signed>"
         "\r\n rpm        (status)"
         "\r\n pi <kp> <ki>"
-        "\r\n base <low> <mid> <high>"
-        "\r\n boost <low> <mid> <high> <ms>"
+        "\r\n base <b1> ... <b8>"
+        "\r\n boost <b1> ... <b8> <ms>"
         "\r\n ramp <up> <down>"
         "\r\n spstat"
         "\r\n hall"

@@ -73,25 +73,37 @@ extern "C" {
  * Speed PI defaults
  *
  * ISSUE-040: the first cube revision set these so conservatively
- * (base low=20, boost low=35, max PWM=100, Kp=0.6, Ki=0) that a
+ * (base=20, boost=35, max PWM=100, Kp=0.6, Ki=0) that a
  * low-RPM hub motor could not produce enough torque to start.  The
- * legacy Arduino firmware used base low=55, boost=65, max PWM=180,
+ * legacy Arduino firmware used base=55, boost=65, max PWM=180,
  * Kp=0.8, Ki=0.1.  The values below are a middle ground: strong
  * enough to start the motor, still safe for a current-limited bench
  * PSU and no current sense.  Tune via `pi`, `base`, `boost` after
  * first motion is observed.
  *
  * Duty range is 0..PWM_MAX_DUTY (4000).  The old 0..250 values are
- * scaled by 16x so the same percentage duty is preserved.
+ * scaled by 16x so the same percentage duty is preserved.  Base and
+ * boost use eight equal target-RPM bands across 0..MAX_RPM_TARGET;
+ * boost duration is one shared value for all bands.
  * ---------------------------------------------------------------- */
 #define DEFAULT_SPEED_KP                 0.8f
 #define DEFAULT_SPEED_KI                 0.05f
-#define DEFAULT_BASE_PWM_LOW             640U
-#define DEFAULT_BASE_PWM_MID             720U
-#define DEFAULT_BASE_PWM_HIGH            640U
-#define DEFAULT_BOOST_LOW_PWM            880U
-#define DEFAULT_BOOST_MID_PWM            960U
-#define DEFAULT_BOOST_HIGH_PWM           1040U
+#define DEFAULT_BASE_PWM_1               640U
+#define DEFAULT_BASE_PWM_2               660U
+#define DEFAULT_BASE_PWM_3               680U
+#define DEFAULT_BASE_PWM_4               700U
+#define DEFAULT_BASE_PWM_5               720U
+#define DEFAULT_BASE_PWM_6               700U
+#define DEFAULT_BASE_PWM_7               670U
+#define DEFAULT_BASE_PWM_8               640U
+#define DEFAULT_BOOST_PWM_1              880U
+#define DEFAULT_BOOST_PWM_2              900U
+#define DEFAULT_BOOST_PWM_3              920U
+#define DEFAULT_BOOST_PWM_4              940U
+#define DEFAULT_BOOST_PWM_5              960U
+#define DEFAULT_BOOST_PWM_6              990U
+#define DEFAULT_BOOST_PWM_7              1020U
+#define DEFAULT_BOOST_PWM_8              1040U
 #define DEFAULT_BOOST_TIME_MS            150U
 #define DEFAULT_BOOST_EDGE_THRESH        3U
 #define DEFAULT_RAMP_UP_RPM_SEC          60.0f

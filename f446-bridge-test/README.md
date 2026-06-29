@@ -60,7 +60,7 @@ F446 USB serial üzerinden şu komutları kabul eder:
 | `raw <cmd>` | `<cmd>` satırını F411'e gönderir |
 | `stop` | Normal durdurma: `rpm 0` + `stop` (fault latch yok) |
 | `safe` / `alloff` | Coast durdurma: `safe` + `stop` (motor coast, no fault latch) |
-| `estop` | Acil durdurma: F411'e `estop` gönderir (fault latch, `clrerr` gerekli) |
+| `estop` | Acil durdurma: F411'e `estop` gönderir; sonraki hareket komutu fault'u temizleyebilir |
 | `all <cmd>` | Tüm motorlara gönderir (tek motor build'de M1'e gider) |
 
 ### Doğrudan F411 Passthrough (unlock gerektirmez)
@@ -90,12 +90,15 @@ map set/apply/reset/save    (map yazma)
 save/savecfg/loadcfg        (flash işlemleri)
 ```
 
+PI bant formatı: `base` komutu 8 PWM değeri; `boost` komutu 8 PWM
+değeri ve tüm bantlar için ortak tek `ms` değeri alır.
+
 ## Telemetry Bridge Formatı
 
 F411'den gelen her satır PC'ye şu prefix ile gönderilir:
 
 ```text
-M1|RPM:23,T:30,D:67,DIR:F,PH:1,SP:1,BRAKE:0,FC:0,H:5,PWM_SET:67,PWM_ACT:67
+M1|RPM:23,T:30,D:67,DIR:F,APP_PH:1,SP:1,BRAKE:0,FC:0,H:5,PWM_SET:67,PWM_ACT:67,QDROP:0
 ```
 
 F446 kendi mesajları için şu prefix'leri kullanır:
@@ -186,7 +189,8 @@ tools/
 - GUI bağlanınca motor otomatik hareket etmez.
 - `stop` normal durdurma: `rpm 0` + kısa bekleme + `stop`. Fault latch oluşturmaz.
 - `safe` / `alloff` coast durdurma: `safe` + kısa bekleme + `stop`. Motor coast olur, fault latch yok.
-- `estop` acil durdurma: F411'e gerçek `estop` gönderir. Fault latch oluşur, `clrerr` ile sıfırlanır.
+- `estop` acil durdurma: F411'e gerçek `estop` gönderir. Güncel F411 politikasında sonraki hareket komutu fault'u temizleyip yeniden başlayabilir; `clrerr` manuel temizleme için kullanılabilir.
+- `x` / `brake` aktif fren uygular (tüm low-side MOSFET'ler ON). Akım algılama yoktur; yalnızca düşük hızda ve akım limitli PSU ile kullanın.
 - F411'in kendi command watchdog'ı (800 ms) heartbeat kesilirse motoru durdurur.
 - GUI kapanırken safe stop gönderir.
 - Donanımda akım ölçümü yoktur. Akım limitli PSU kullanın.

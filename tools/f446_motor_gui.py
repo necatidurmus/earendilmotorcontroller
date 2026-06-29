@@ -148,12 +148,10 @@ class App(tk.Tk):
         # PI tuning vars
         self.pi_kp = tk.StringVar(value="0.800")
         self.pi_ki = tk.StringVar(value="0.050")
-        self.pi_base_lo = tk.StringVar(value="40")
-        self.pi_base_mid = tk.StringVar(value="45")
-        self.pi_base_hi = tk.StringVar(value="40")
-        self.pi_boost_lo = tk.StringVar(value="55")
-        self.pi_boost_mid = tk.StringVar(value="60")
-        self.pi_boost_hi = tk.StringVar(value="65")
+        self.pi_base = [tk.StringVar(value=v) for v in
+                        ("640", "660", "680", "700", "720", "700", "670", "640")]
+        self.pi_boost = [tk.StringVar(value=v) for v in
+                         ("880", "900", "920", "940", "960", "990", "1020", "1040")]
         self.pi_boost_ms = tk.StringVar(value="150")
         self.pi_ramp_up = tk.StringVar(value="60")
         self.pi_ramp_down = tk.StringVar(value="150")
@@ -410,19 +408,21 @@ class App(tk.Tk):
         ttk.Entry(parent, textvariable=self.pi_ki, width=8).grid(row=row, column=3, padx=2)
         row += 1
 
-        # Base PWM: lo, mid, hi
+        # Base PWM: 8 RPM bands
         ttk.Label(parent, text="Base").grid(row=row, column=0, sticky="w", pady=(4, 0))
-        ttk.Entry(parent, textvariable=self.pi_base_lo, width=5).grid(row=row, column=1, padx=2, pady=(4, 0))
-        ttk.Entry(parent, textvariable=self.pi_base_mid, width=5).grid(row=row, column=2, padx=2, pady=(4, 0))
-        ttk.Entry(parent, textvariable=self.pi_base_hi, width=5).grid(row=row, column=3, padx=2, pady=(4, 0))
+        for i, var in enumerate(self.pi_base):
+            ttk.Entry(parent, textvariable=var, width=5).grid(
+                row=row, column=i + 1, padx=2, pady=(4, 0))
         row += 1
 
-        # Boost PWM: lo, mid, hi, ms
+        # Boost PWM: 8 RPM bands and one shared duration
         ttk.Label(parent, text="Boost").grid(row=row, column=0, sticky="w", pady=(4, 0))
-        ttk.Entry(parent, textvariable=self.pi_boost_lo, width=5).grid(row=row, column=1, padx=2, pady=(4, 0))
-        ttk.Entry(parent, textvariable=self.pi_boost_mid, width=5).grid(row=row, column=2, padx=2, pady=(4, 0))
-        ttk.Entry(parent, textvariable=self.pi_boost_hi, width=5).grid(row=row, column=3, padx=2, pady=(4, 0))
-        ttk.Entry(parent, textvariable=self.pi_boost_ms, width=5).grid(row=row, column=4, padx=2, pady=(4, 0))
+        for i, var in enumerate(self.pi_boost):
+            ttk.Entry(parent, textvariable=var, width=5).grid(
+                row=row, column=i + 1, padx=2, pady=(4, 0))
+        ttk.Label(parent, text="ms").grid(row=row, column=9, padx=(6, 0), pady=(4, 0))
+        ttk.Entry(parent, textvariable=self.pi_boost_ms, width=5).grid(
+            row=row, column=10, padx=2, pady=(4, 0))
         row += 1
 
         # Ramp: up, down
@@ -434,7 +434,7 @@ class App(tk.Tk):
 
         # Buttons
         btn_row = ttk.Frame(parent)
-        btn_row.grid(row=row, column=0, columnspan=5, pady=(8, 0), sticky="ew")
+        btn_row.grid(row=row, column=0, columnspan=11, pady=(8, 0), sticky="ew")
         ttk.Button(btn_row, text="Apply All", command=self._apply_pi).pack(side="left", padx=4)
         ttk.Button(btn_row, text="Read", command=self._read_pi).pack(side="left", padx=4)
 
@@ -443,12 +443,8 @@ class App(tk.Tk):
         try:
             kp = float(self.pi_kp.get())
             ki = float(self.pi_ki.get())
-            base_lo = int(self.pi_base_lo.get())
-            base_mid = int(self.pi_base_mid.get())
-            base_hi = int(self.pi_base_hi.get())
-            boost_lo = int(self.pi_boost_lo.get())
-            boost_mid = int(self.pi_boost_mid.get())
-            boost_hi = int(self.pi_boost_hi.get())
+            base = [int(var.get()) for var in self.pi_base]
+            boost = [int(var.get()) for var in self.pi_boost]
             boost_ms = int(self.pi_boost_ms.get())
             ramp_up = float(self.pi_ramp_up.get())
             ramp_down = float(self.pi_ramp_down.get())
@@ -461,9 +457,9 @@ class App(tk.Tk):
         # is processed before the m1-prefixed commands arrive.
         self._send("bridge unlock_service CURRENT_LIMITED_BENCH_SUPPLY")
         self.after(150, lambda: self._send(f"m1 pi {kp:.3f} {ki:.3f}"))
-        self.after(220, lambda: self._send(f"m1 base {base_lo} {base_mid} {base_hi}"))
+        self.after(220, lambda: self._send("m1 base " + " ".join(map(str, base))))
         self.after(290, lambda: self._send(
-            f"m1 boost {boost_lo} {boost_mid} {boost_hi} {boost_ms}"))
+            "m1 boost " + " ".join(map(str, boost)) + f" {boost_ms}"))
         self.after(360, lambda: self._send(f"m1 ramp {ramp_up:.0f} {ramp_down:.0f}"))
 
     def _read_pi(self):
@@ -606,8 +602,10 @@ class App(tk.Tk):
     def _handle_line(self, line):
         self._log("RX " + line)
 
+        response_line = line
         if line.startswith("M1|"):
             payload = line[3:]
+            response_line = payload
             fields = {}
             for part in payload.split(","):
                 if ":" not in part:
@@ -638,25 +636,24 @@ class App(tk.Tk):
             self._draw_gauge(rpm, stale=False)
 
         # Parse spstat response lines for PI tuning read-back
-        m = re.match(r"Kp_m=([0-9.]+)\s+Ki_m=([0-9.]+)", line)
+        m = re.match(r"Kp_m=([0-9.]+)\s+Ki_m=([0-9.]+)", response_line)
         if m:
             self.pi_kp.set(f"{int(m.group(1)) / 1000:.3f}")
             self.pi_ki.set(f"{int(m.group(2)) / 1000:.3f}")
             return
-        m = re.match(r"Base\s+L=(\d+)\s+M=(\d+)\s+H=(\d+)", line)
+        m = re.match(r"Base\s+" + r"\s+".join([r"(\d+)"] * 8) + r"$", response_line)
         if m:
-            self.pi_base_lo.set(m.group(1))
-            self.pi_base_mid.set(m.group(2))
-            self.pi_base_hi.set(m.group(3))
+            for var, value in zip(self.pi_base, m.groups()):
+                var.set(value)
             return
-        m = re.match(r"Boost\s+L=(\d+)\s+M=(\d+)\s+H=(\d+)\s+ms=(\d+)", line)
+        m = re.match(r"Boost\s+" + r"\s+".join([r"(\d+)"] * 8) +
+                     r"\s+ms=(\d+)$", response_line)
         if m:
-            self.pi_boost_lo.set(m.group(1))
-            self.pi_boost_mid.set(m.group(2))
-            self.pi_boost_hi.set(m.group(3))
-            self.pi_boost_ms.set(m.group(4))
+            for var, value in zip(self.pi_boost, m.groups()[:8]):
+                var.set(value)
+            self.pi_boost_ms.set(m.group(9))
             return
-        m = re.match(r"Ramp\s+up=([0-9.]+)\s+down=([0-9.]+)", line)
+        m = re.match(r"Ramp\s+up=([0-9.]+)\s+down=([0-9.]+)", response_line)
         if m:
             self.pi_ramp_up.set(m.group(1))
             self.pi_ramp_down.set(m.group(2))

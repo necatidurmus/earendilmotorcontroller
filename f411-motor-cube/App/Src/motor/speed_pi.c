@@ -35,13 +35,8 @@ typedef struct {
     float      ki;
     float      integral;
 
-    uint16_t   base_low;
-    uint16_t   base_mid;
-    uint16_t   base_high;
-
-    uint16_t   boost_low;
-    uint16_t   boost_mid;
-    uint16_t   boost_high;
+    uint16_t   base_pwm[SPEED_PI_BAND_COUNT];
+    uint16_t   boost_pwm[SPEED_PI_BAND_COUNT];
     uint16_t   boost_ms;
     uint8_t    boost_edge_thresh;
 
@@ -81,12 +76,16 @@ void SpeedPI_Init(void)
     memset(&s_spi, 0, sizeof(s_spi));
     s_spi.kp               = DEFAULT_SPEED_KP;
     s_spi.ki               = DEFAULT_SPEED_KI;
-    s_spi.base_low         = DEFAULT_BASE_PWM_LOW;
-    s_spi.base_mid         = DEFAULT_BASE_PWM_MID;
-    s_spi.base_high        = DEFAULT_BASE_PWM_HIGH;
-    s_spi.boost_low        = DEFAULT_BOOST_LOW_PWM;
-    s_spi.boost_mid        = DEFAULT_BOOST_MID_PWM;
-    s_spi.boost_high       = DEFAULT_BOOST_HIGH_PWM;
+    const uint16_t base_defaults[SPEED_PI_BAND_COUNT] = {
+        DEFAULT_BASE_PWM_1, DEFAULT_BASE_PWM_2, DEFAULT_BASE_PWM_3, DEFAULT_BASE_PWM_4,
+        DEFAULT_BASE_PWM_5, DEFAULT_BASE_PWM_6, DEFAULT_BASE_PWM_7, DEFAULT_BASE_PWM_8
+    };
+    const uint16_t boost_defaults[SPEED_PI_BAND_COUNT] = {
+        DEFAULT_BOOST_PWM_1, DEFAULT_BOOST_PWM_2, DEFAULT_BOOST_PWM_3, DEFAULT_BOOST_PWM_4,
+        DEFAULT_BOOST_PWM_5, DEFAULT_BOOST_PWM_6, DEFAULT_BOOST_PWM_7, DEFAULT_BOOST_PWM_8
+    };
+    memcpy(s_spi.base_pwm, base_defaults, sizeof(s_spi.base_pwm));
+    memcpy(s_spi.boost_pwm, boost_defaults, sizeof(s_spi.boost_pwm));
     s_spi.boost_ms         = DEFAULT_BOOST_TIME_MS;
     s_spi.boost_edge_thresh= DEFAULT_BOOST_EDGE_THRESH;
     s_spi.ramp_up          = DEFAULT_RAMP_UP_RPM_SEC;
@@ -132,18 +131,23 @@ void SpeedPI_SetTargetRpm(int32_t rpm)
     s_spi.direction = (rpm > 0) ? +1 : ((rpm < 0) ? -1 : 0);
 }
 
+static uint8_t band_for_rpm(float abs_rpm)
+{
+    if (abs_rpm <= 0.0f) return 0U;
+    uint32_t scaled = (uint32_t)(abs_rpm * (float)SPEED_PI_BAND_COUNT);
+    uint32_t index = scaled / (uint32_t)MAX_RPM_TARGET;
+    if (index >= SPEED_PI_BAND_COUNT) index = SPEED_PI_BAND_COUNT - 1U;
+    return (uint8_t)index;
+}
+
 static uint16_t base_pwm_for_rpm(float abs_rpm)
 {
-    if (abs_rpm <= 30.0f)        return s_spi.base_low;
-    else if (abs_rpm <= 150.0f)  return s_spi.base_mid;
-    else                          return s_spi.base_high;
+    return s_spi.base_pwm[band_for_rpm(abs_rpm)];
 }
 
 static uint16_t boost_pwm_for_rpm(float abs_rpm)
 {
-    if (abs_rpm <= 30.0f)        return s_spi.boost_low;
-    else if (abs_rpm <= 150.0f)  return s_spi.boost_mid;
-    else                          return s_spi.boost_high;
+    return s_spi.boost_pwm[band_for_rpm(abs_rpm)];
 }
 
 void SpeedPI_Tick(uint32_t nowMs)
@@ -303,22 +307,22 @@ SpeedFault SpeedPI_GetFault(void)        { return s_spi.fault; }
 float SpeedPI_GetK(void)                 { return s_spi.kp; }
 void  SpeedPI_SetKp(float kp)            { s_spi.kp = clampf(kp, 0.0f, 10.0f); }
 void  SpeedPI_SetKi(float ki)            { s_spi.ki = clampf(ki, 0.0f, 10.0f); }
-void SpeedPI_SetBasePwm(uint16_t low, uint16_t mid, uint16_t high)
+void SpeedPI_SetBasePwm(const uint16_t bands[SPEED_PI_BAND_COUNT])
 {
     /* ISSUE-040: clamp each band to 0..SPEED_PI_MAX_PWM so a stray
      * `base` command cannot push the feed-forward above the PI
      * saturation limit. */
     uint16_t mx = SPEED_PI_MAX_PWM;
-    s_spi.base_low  = (low  > mx) ? mx : low;
-    s_spi.base_mid  = (mid  > mx) ? mx : mid;
-    s_spi.base_high = (high > mx) ? mx : high;
+    for (uint8_t i = 0U; i < SPEED_PI_BAND_COUNT; i++) {
+        s_spi.base_pwm[i] = (bands[i] > mx) ? mx : bands[i];
+    }
 }
-void SpeedPI_SetBoostPwm(uint16_t low, uint16_t mid, uint16_t high, uint16_t ms)
+void SpeedPI_SetBoostPwm(const uint16_t bands[SPEED_PI_BAND_COUNT], uint16_t ms)
 {
     uint16_t mx = SPEED_PI_MAX_PWM;
-    s_spi.boost_low  = (low  > mx) ? mx : low;
-    s_spi.boost_mid  = (mid  > mx) ? mx : mid;
-    s_spi.boost_high = (high > mx) ? mx : high;
+    for (uint8_t i = 0U; i < SPEED_PI_BAND_COUNT; i++) {
+        s_spi.boost_pwm[i] = (bands[i] > mx) ? mx : bands[i];
+    }
     if (ms > 1000U) ms = 1000U;
     s_spi.boost_ms   = ms;
 }
@@ -333,17 +337,13 @@ void SpeedPI_GetGains(float *kp, float *ki)
     if (kp) *kp = s_spi.kp;
     if (ki) *ki = s_spi.ki;
 }
-void SpeedPI_GetBasePwm(uint16_t *low, uint16_t *mid, uint16_t *high)
+void SpeedPI_GetBasePwm(uint16_t bands[SPEED_PI_BAND_COUNT])
 {
-    if (low)  *low  = s_spi.base_low;
-    if (mid)  *mid  = s_spi.base_mid;
-    if (high) *high = s_spi.base_high;
+    if (bands) memcpy(bands, s_spi.base_pwm, sizeof(s_spi.base_pwm));
 }
-void SpeedPI_GetBoostPwm(uint16_t *low, uint16_t *mid, uint16_t *high, uint16_t *ms)
+void SpeedPI_GetBoostPwm(uint16_t bands[SPEED_PI_BAND_COUNT], uint16_t *ms)
 {
-    if (low)  *low  = s_spi.boost_low;
-    if (mid)  *mid  = s_spi.boost_mid;
-    if (high) *high = s_spi.boost_high;
+    if (bands) memcpy(bands, s_spi.boost_pwm, sizeof(s_spi.boost_pwm));
     if (ms)   *ms   = s_spi.boost_ms;
 }
 void SpeedPI_GetRampRates(float *up, float *down)

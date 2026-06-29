@@ -49,20 +49,26 @@ bool CommandHandlers_Query_Handle(char *cmd)
             (unsigned)HallSensor_GetStableRaw());
         {
             float kp, ki, up, down;
-            uint16_t blo, bmid, bhi, bstlo, bstmid, bsthi;
+            uint16_t base[SPEED_PI_BAND_COUNT];
+            uint16_t boost[SPEED_PI_BAND_COUNT];
             uint16_t ms;
             SpeedPI_GetGains(&kp, &ki);
-            SpeedPI_GetBasePwm(&blo, &bmid, &bhi);
-            SpeedPI_GetBoostPwm(&bstlo, &bstmid, &bsthi, &ms);
+            SpeedPI_GetBasePwm(base);
+            SpeedPI_GetBoostPwm(boost, &ms);
             SpeedPI_GetRampRates(&up, &down);
             /* NOTE: newlib-nano does not support %f.  Print gains as
              * milli-scaled integers to match the pi/kp/ki handlers. */
             UartProtocol_Printf("\r\nKp_m=%ld Ki_m=%ld",
                 (long)(kp * 1000.0f), (long)(ki * 1000.0f));
-            UartProtocol_Printf("\r\nBase L=%u M=%u H=%u",
-                (unsigned)blo, (unsigned)bmid, (unsigned)bhi);
-            UartProtocol_Printf("\r\nBoost L=%u M=%u H=%u ms=%u",
-                (unsigned)bstlo, (unsigned)bstmid, (unsigned)bsthi, (unsigned)ms);
+            UartProtocol_Print("\r\nBase");
+            for (uint8_t i = 0U; i < SPEED_PI_BAND_COUNT; i++) {
+                UartProtocol_Printf(" %u", (unsigned)base[i]);
+            }
+            UartProtocol_Print("\r\nBoost");
+            for (uint8_t i = 0U; i < SPEED_PI_BAND_COUNT; i++) {
+                UartProtocol_Printf(" %u", (unsigned)boost[i]);
+            }
+            UartProtocol_Printf(" ms=%u", (unsigned)ms);
             UartProtocol_Printf("\r\nRamp up=%ld down=%ld",
                 (long)up, (long)down);
         }

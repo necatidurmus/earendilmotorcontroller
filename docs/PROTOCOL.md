@@ -47,8 +47,8 @@ H7 wheelbridge.
 | `rpm <signed>` | set RPM target (clamped to ±500); `+` forward, `-` reverse, `0` stop. **Must be refreshed periodically** (see below) |
 | `pi <kp> <ki>` | set both PI gains (clamped 0..10) |
 | `kp <v>` / `ki <v>` | set one gain (compat) |
-| `base <lo> <mid> <hi>` | feed-forward base PWM per RPM band (≤30 / ≤150 / >150), each 0..4000 |
-| `boost <lo> <mid> <hi> <ms>` | start boost values (PWM 0..4000, ms 0..1000) |
+| `base <b1> ... <b8>` | feed-forward PWM for 8 equal target-RPM bands across 0..500 RPM; each 0..4000 |
+| `boost <b1> ... <b8> <ms>` | start-boost PWM for the same 8 bands plus one shared duration; PWM 0..4000, ms 0..1000 |
 | `ramp <up> <down>` | target ramp rates (RPM/s) |
 | `spstat` | speed-PI status block |
 
@@ -214,10 +214,10 @@ Direct FTDI to F411:
 [OK] Mode=SPEED
 > pi 0.6 0.0
 [OK] Kp_m=600 Ki_m=0
-> base 20 35 30
-[OK] Base L=20 M=35 H=30
-> boost 35 45 50 60
-[OK] Boost L=35 M=45 H=50 ms=60
+> base 640 660 680 700 720 700 670 640
+[OK] Base 640 660 680 700 720 700 670 640
+> boost 880 900 920 940 960 990 1020 1040 150
+[OK] Boost 880 900 920 940 960 990 1020 1040 ms=150
 > ramp 30 100
 [OK] Ramp up=30 down=100
 > rpm 10

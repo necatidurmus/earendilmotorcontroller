@@ -110,8 +110,10 @@ gate fails, stop and file an issue before continuing.
 ## Stage 6 — Speed PI unloaded
 
 * `mode speed`
-* Defaults after ISSUE-040 are Kp=0.8, Ki=0.05, base=640/720/640,
-  boost=880/960/1040 ms=150.  These are a middle ground between the
+* Defaults after ISSUE-040 are Kp=0.8, Ki=0.05,
+  base=640/660/680/700/720/700/670/640 and
+  boost=880/900/920/940/960/990/1020/1040 with shared ms=150.
+  These are a middle ground between the
   too-conservative first cube revision and the aggressive legacy
   Arduino values.  Tune from here.
 * `rpm 10` — motor regulates to ~10 RPM.
