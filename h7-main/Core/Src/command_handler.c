@@ -46,6 +46,7 @@ static bool IsSafeRawPayload(const char *p)
         return false;
     return (strcmp(p, "status")      == 0 ||
             strcmp(p, "hall")         == 0 ||
+            strcmp(p, "h")            == 0 ||
             strcmp(p, "stop")         == 0 ||
             strcmp(p, "s")            == 0 ||
             strcmp(p, "x")            == 0 ||
@@ -423,6 +424,7 @@ void CommandHandler_Handle(const TerminalCommand_t *cmd)
             case TCMD_OP_MODE:      /* mode disarm/manual/auto/autonomous */
             case TCMD_HELP:         /* help */
             case TCMD_STATUS:       /* status (query) */
+            case TCMD_HALL:         /* hall (query) */
             case TCMD_MODE_QUERY:   /* mode (query) */
             case TCMD_STOP:         /* stop (safe) */
             case TCMD_BRAKE:        /* brake (safe) */
@@ -582,6 +584,10 @@ void CommandHandler_Handle(const TerminalCommand_t *cmd)
 
         case TCMD_STATUS:
             MotorDispatcher_SendRaw("status");
+            break;
+
+        case TCMD_HALL:
+            MotorDispatcher_SendRaw("hall");
             break;
 
         case TCMD_BRIDGE:

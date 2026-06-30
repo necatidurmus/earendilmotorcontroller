@@ -457,6 +457,13 @@ bool TerminalParser_Parse(const char *line, TerminalCommand_t *outResult)
         return true;
     }
 
+    /* ── 5b. hall ────────────────────────────────────────────────────── */
+    if (strcmp(buf, "hall") == 0 || strcmp(buf, "h") == 0)
+    {
+        outResult->type = TCMD_HALL;
+        return true;
+    }
+
     /* ── 6. m speed (control mode) ──────────────────────────────────── */
     if (strcmp(buf, "m speed") == 0)
     {
@@ -663,14 +670,15 @@ bool TerminalParser_Parse(const char *line, TerminalCommand_t *outResult)
         }
     }
 
-    /* ── 9c. ALL motor tuning: ALL <tuning command> ─────────────────────
-     *  "ALL" is not a valid motor ID for raw forwarding (use individual
-     *  tags for that).  Only tuning commands are accepted after ALL. */
+    /* ── 9c. ALL motor commands: ALL <command> ────────────────────────────
+     *  "ALL" can be used with identify, status, hall, stop, safe, brake,
+     *  estop, and tuning commands.  For motion (f/b/r/l), use the rover-
+     *  level motion commands instead, not ALL. */
     if (len >= 3 && buf[0] == 'a' && buf[1] == 'l' && buf[2] == 'l')
     {
         if (len == 3)
         {
-            /* bare "ALL" — not valid for raw; just error */
+            /* bare "ALL" — not valid */
             return false;
         }
         if (buf[3] == ' ')
@@ -679,9 +687,67 @@ bool TerminalParser_Parse(const char *line, TerminalCommand_t *outResult)
             size_t plen = len - 4;
             if (plen > 0)
             {
+                /* ALL identify — broadcast identify */
+                if (strcmp(payload, "identify") == 0)
+                {
+                    outResult->type = TCMD_IDENTIFY;
+                    return true;
+                }
+                /* ALL status — broadcast status */
+                if (strcmp(payload, "status") == 0)
+                {
+                    outResult->type = TCMD_STATUS;
+                    return true;
+                }
+                /* ALL hall — broadcast hall */
+                if (strcmp(payload, "hall") == 0 || strcmp(payload, "h") == 0)
+                {
+                    outResult->type = TCMD_HALL;
+                    return true;
+                }
+                /* ALL stop — broadcast stop (already handled as TCMD_STOP) */
+                if (strcmp(payload, "stop") == 0 || strcmp(payload, "s") == 0)
+                {
+                    outResult->type = TCMD_STOP;
+                    outResult->motion.direction = DIR_STOP;
+                    outResult->motion.speed = 0;
+                    return true;
+                }
+                /* ALL safe/alloff */
+                if (strcmp(payload, "safe") == 0 || strcmp(payload, "alloff") == 0)
+                {
+                    outResult->type = TCMD_SAFE;
+                    return true;
+                }
+                /* ALL brake */
+                if (strcmp(payload, "brake") == 0 || strcmp(payload, "x") == 0)
+                {
+                    outResult->type = TCMD_BRAKE;
+                    return true;
+                }
+                /* ALL estop */
+                if (strcmp(payload, "estop") == 0)
+                {
+                    outResult->type = TCMD_ESTOP;
+                    return true;
+                }
+                /* ALL mode duty / mode speed */
+                if (strcmp(payload, "mode duty") == 0)
+                {
+                    outResult->type = TCMD_MODE_PWM;
+                    return true;
+                }
+                if (strcmp(payload, "mode speed") == 0)
+                {
+                    outResult->type = TCMD_MODE_RPM;
+                    return true;
+                }
+                /* Try tuning command (base, boost, pi, etc.) */
                 TuneMotorTarget_t target = TUNE_MOTOR_ALL;
                 if (ParseTuneCommand(NULL, &target, payload, plen, outResult))
                     return true;
+
+                /* Fall through: ALL with unknown payload -> error */
             }
         }
     }

@@ -46,6 +46,7 @@ typedef enum
     TCMD_SAFE,          /* safe/alloff — coast stop */
     TCMD_IDENTIFY,      /* identify */
     TCMD_STATUS,        /* status */
+    TCMD_HALL,          /* hall — Hall sensor query */
     TCMD_BRIDGE,        /* bridge on/off/status/unlock_service/lock_service */
     TCMD_SERVICE,       /* service unlock/lock/status (alias) */
     TCMD_MODE_RPM,      /* m speed */
