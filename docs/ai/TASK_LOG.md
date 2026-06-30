@@ -4,6 +4,16 @@ Agent task history. Newest entries on top.
 
 ---
 
+## 2026-06-30 — H7 F446 Import: Service Lock, Stop Sequences, Bridge Commands, GUI Panel
+
+- **Purpose:** Import F446 bridge safety/control structures into H7 firmware
+- **Read:** F446 main.cpp, H7 terminal_parser.c/h, command_handler.c/h, motion_controller.c/h, motor_uart_dma.c/h, motor_dispatcher.c/h, motor_tx_dma.c/h, safety_manager.c/h, app_main.c, app_config.h, rover_types.h, earendil.py, F446_STRUCTURE_INTEGRATION_PLAN.md
+- **Changed (new):** `h7-main/Core/Inc/service_lock.h`, `h7-main/Core/Src/service_lock.c`, `h7-main/Core/Inc/telemetry_bridge.h`, `h7-main/Core/Src/telemetry_bridge.c`, `docs/H7_F446_IMPORT_IMPLEMENTATION_PLAN.md`, `docs/H7_F446_IMPORT_TEST_PLAN.md`
+- **Changed (modified):** `h7-main/Core/Inc/terminal_parser.h`, `h7-main/Core/Src/terminal_parser.c`, `h7-main/Core/Inc/motion_controller.h`, `h7-main/Core/Src/motion_controller.c`, `h7-main/Core/Src/command_handler.c`, `h7-main/Core/Src/motor_uart_dma.c`, `h7-main/Core/Src/app_main.c`, `h7-main/Core/Inc/app_config.h`, `h7-main/Debug/makefile`, `h7-main/Debug/Core/Src/subdir.mk`, `h7-main/earendil.py`
+- **Why:** Integrate F446 bridge features (service lock, estop, bridge on/off, safe/alloff, per-motor identify, dangerous command gate, stop sequences, RX line assembler) into H7
+- **Build/test:** arm-none-eabi-gcc not available on this host; native GCC syntax check passes (0 errors) for all 7 modified/new C files; `py_compile` passes for earendil.py
+- **Remaining risks:** (1) Full ARM cross-build not tested — arm-none-eabi-gcc not on this machine. (2) STM32CubeIDE auto-regenerated makefile may revert the absolute-path fix. (3) motor_uart_dma.c line assembler not runtime-tested. (4) command_handler.c `HandleIdentifyMotor` and brake sequence rely on `WaitForTxDrain` which blocks main loop briefly (100ms max).
+
 ## 2026-06-28 — Implement 8-band base/boost PI tuning
 - **Purpose:** Replace the 3-band model with 8 base values, 8 boost values, and one shared boost duration.
 - **Read:** Speed PI, config/query/status handlers, F446 GUI/bridge, protocol and bring-up docs.
