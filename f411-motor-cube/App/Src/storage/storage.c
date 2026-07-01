@@ -505,6 +505,12 @@ bool Storage_HasValidConfig(void)
     return (find_latest_sequence() > 0U);
 }
 
+uint32_t Storage_GetConfigSequence(void)
+{
+    if (!flash_size_ok()) return 0U;
+    return find_latest_sequence();
+}
+
 /* ---- Legacy API wrappers ---- */
 
 bool Storage_SaveConfigLegacy(uint16_t kickDuty, uint16_t kickMs,

@@ -107,9 +107,10 @@ void App_Init(void)
         PersistentConfig_t cfg;
         if (Storage_LoadConfig(&cfg)) {
             ConfigSnapshot_ApplyToRuntime(&cfg);
-            UartProtocol_Print("\r\n[OK] Config loaded from flash");
+            UartProtocol_Printf("\r\n[OK] Config loaded from Flash seq=%lu",
+                (unsigned long)Storage_GetConfigSequence());
         } else {
-            UartProtocol_Print("\r\n[INFO] No saved config, defaults kept");
+            UartProtocol_Print("\r\n[INFO] No valid config in Flash — defaults active");
         }
     }
 

@@ -4,6 +4,17 @@ Agent task history. Newest entries on top.
 
 ---
 
+## 2026-07-01 — Config persistence diagnostics
+
+- **Purpose:** Improve config persistence visibility: sequence numbers in output, savecfg post-write verification, clearer failure messages
+- **Read:** `storage.c`, `storage.h`, `command_handlers_config.c`, `app_main.c`, `config_snapshot.c`, PROTOCOL.md, F411_FLASH_CONFIG_PERSISTENCE.md
+- **Changed:** `App/Src/storage/storage.c` (added `Storage_GetConfigSequence()`), `App/Inc/storage/storage.h` (already had declaration from prior session), `App/Src/command/command_handlers_config.c` (`cfg` shows seq, `savecfg` post-write verify, `loadcfg` reports seq / "runtime unchanged", `erasecfg` reports "runtime unchanged"), `App/Src/app/app_main.c` (boot message shows seq / "defaults active"), `docs/PROTOCOL.md`, `docs/F411_FLASH_CONFIG_PERSISTENCE.md`
+- **Why:** Users had no way to see which config generation was active; savecfg had no read-back verification; loadcfg/erasecfg messages were ambiguous about whether runtime was affected
+- **Build/test:** `pio run -d f411-motor-cube` SUCCESS (RAM 2.2%, Flash 10.4%)
+- **Remaining risks:** Post-write verify checks sequence only, not full record CRC; verify-read could race if flash program is delayed (unlikely on STM32, program is synchronous)
+
+---
+
 ## 2026-06-30 — H7 F446 Import: Service Lock, Stop Sequences, Bridge Commands, GUI Panel
 
 - **Purpose:** Import F446 bridge safety/control structures into H7 firmware

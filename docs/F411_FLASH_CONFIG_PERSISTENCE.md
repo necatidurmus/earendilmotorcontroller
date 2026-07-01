@@ -68,7 +68,7 @@ Total: 80 bytes (word-aligned).
 | `savecfg`, `save`, `saveall` | Snapshot runtime config and save to flash |
 | `loadcfg` | Load config from flash into runtime |
 | `erasecfg` | Erase all config records from flash |
-| `cfg` | Display current RAM config + flash status |
+| `cfg` | Display current RAM config + flash status (VALID/EMPTY) + saved sequence number |
 | `defaults` | Reset all config to defaults (RAM only, no auto-save) |
 | `map save` | Save hall map to flash (now enabled) |
 
@@ -81,7 +81,7 @@ status
 cfg
 ```
 
-Expected: `[INFO] No saved config, defaults kept` at boot. `cfg` shows default values. `Flash: EMPTY`.
+Expected: `[INFO] No valid config in Flash — defaults active` at boot. `cfg` shows default values. `Flash: EMPTY seq=0`.
 
 ### Test 2 — Tuning
 
@@ -110,7 +110,7 @@ stop
 savecfg
 ```
 
-Expected: `[OK] Config saved`. Motor must be stopped first.
+Expected: `[OK] Config saved to Flash seq=1`. Motor must be stopped first. Post-write verify-read succeeds.
 
 ### Test 4 — Reset / Power-Cycle
 
@@ -131,7 +131,7 @@ Expected:
 - kick ON, kickduty, kickms unchanged
 - ramprate/rampms/default_pwm unchanged
 - telper unchanged
-- `Flash: VALID`
+- `Flash: VALID seq=1`
 
 ### Test 6 — Load After Defaults
 
@@ -145,7 +145,7 @@ cfg
 Expected:
 - `defaults` resets RAM to default values
 - `cfg` after defaults shows default Kp/Ki, base, boost, etc.
-- `loadcfg` restores flash values
+- `loadcfg` restores flash values (`[OK] Config loaded from Flash seq=1`)
 - `cfg` after loadcfg matches test 2 values
 
 ### Test 7 — Erase
@@ -157,9 +157,9 @@ cfg
 ```
 
 Expected:
-- `erasecfg` clears config records from flash
-- After reset, `[INFO] No saved config, defaults kept`
-- `cfg` shows defaults, `Flash: EMPTY`
+- `erasecfg` clears config records from flash (`[OK] Config erased from Flash — runtime unchanged`)
+- After reset, `[INFO] No valid config in Flash — defaults active`
+- `cfg` shows defaults, `Flash: EMPTY seq=0`
 
 ### Test 8 — Config Save While Motor Running (rejection)
 

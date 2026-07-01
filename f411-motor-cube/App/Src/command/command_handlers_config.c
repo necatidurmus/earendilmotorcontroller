@@ -456,7 +456,14 @@ bool CommandHandlers_Config_Handle(char *cmd)
             return true;
         }
         if (Storage_SaveConfig(&cfg)) {
-            UartProtocol_Print("\r\n[OK] Config saved to Flash (Hall map is separate: 'map save')");
+            /* Post-write verification: read back and check sequence. */
+            uint32_t seq = Storage_GetConfigSequence();
+            if (seq == 0U) {
+                UartProtocol_Print("\r\n[WARN] Saved but verify-read found no config");
+            } else {
+                UartProtocol_Printf("\r\n[OK] Config saved to Flash seq=%lu (Hall map is separate: 'map save')",
+                    (unsigned long)seq);
+            }
         } else {
             UartProtocol_Print("\r\n[ERR] Config save failed");
         }
@@ -511,9 +518,11 @@ bool CommandHandlers_Config_Handle(char *cmd)
         PersistentConfig_t cfg;
         if (Storage_LoadConfig(&cfg)) {
             ConfigSnapshot_ApplyToRuntime(&cfg);
-            UartProtocol_Print("\r\n[OK] Config loaded");
+            uint32_t seq = Storage_GetConfigSequence();
+            UartProtocol_Printf("\r\n[OK] Config loaded from Flash seq=%lu",
+                (unsigned long)seq);
         } else {
-            UartProtocol_Print("\r\n[INFO] No saved config");
+            UartProtocol_Print("\r\n[INFO] No saved config — runtime unchanged");
         }
         return true;
     }
@@ -522,7 +531,7 @@ bool CommandHandlers_Config_Handle(char *cmd)
             UartProtocol_Print("\r\n[ERR] Stop motor first"); return true;
         }
         if (Storage_EraseConfig()) {
-            UartProtocol_Print("\r\n[OK] Config erased");
+            UartProtocol_Print("\r\n[OK] Config erased from Flash — runtime unchanged");
         } else {
             UartProtocol_Print("\r\n[ERR] Config erase failed");
         }
@@ -553,8 +562,11 @@ bool CommandHandlers_Config_Handle(char *cmd)
             (unsigned)cfg.default_pwm, (unsigned)cfg.brake_hold_ms);
         UartProtocol_Printf("\r\nTelPer=%lu",
             (unsigned long)cfg.telemetry_interval_ms);
-        UartProtocol_Printf("\r\nFlash: %s",
-            Storage_HasValidConfig() ? "VALID" : "EMPTY");
+        bool has = Storage_HasValidConfig();
+        uint32_t seq = Storage_GetConfigSequence();
+        UartProtocol_Printf("\r\nFlash: %s seq=%lu",
+            has ? "VALID" : "EMPTY",
+            (unsigned long)seq);
         UartProtocol_PrintNewline();
         return true;
     }

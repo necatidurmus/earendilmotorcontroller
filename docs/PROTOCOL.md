@@ -81,11 +81,11 @@ The H7 (`h7-main/`) uses the same protocol format but is not an active target in
 | `map load` | load Hall map from flash |
 | `reload` | alias for `map load` (Hall map only, NOT config) |
 | `map save` | save active Hall map to flash. Motor must be stopped. |
-| `savecfg` / `save` | save runtime config (PI, base, boost, ramp, kick, default_pwm, brake_hold_ms, telper) to flash. Motor must be stopped. |
+| `savecfg` / `save` | save runtime config (PI, base, boost, ramp, kick, default_pwm, brake_hold_ms, telper) to flash. Post-write verification reports sequence number. Motor must be stopped. |
 | `saveall` | alias for `savecfg`; does NOT save Hall map (use `map save` separately) |
-| `loadcfg` | load config from flash into runtime. Motor must be stopped. |
-| `erasecfg` | erase all config records from flash (preserves hall map). Motor must be stopped. |
-| `cfg` | display current RAM config summary and flash status |
+| `loadcfg` | load config from flash into runtime, reports saved sequence number. Motor must be stopped. |
+| `erasecfg` | erase all config records from flash (preserves hall map, runtime unchanged). Motor must be stopped. |
+| `cfg` | display current RAM config summary, flash status (VALID/EMPTY), and saved sequence number |
 | `defaults` | reset ALL runtime config to compile-time defaults in RAM. Does NOT auto-save to flash; use `savecfg` to persist after reset. Motor must be stopped. |
 | `mapreset` | legacy alias for `map default` |
 | `identify` | Hall-map identify routine (**requires service arming**) |
