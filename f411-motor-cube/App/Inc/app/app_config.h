@@ -88,6 +88,8 @@ extern "C" {
  * ---------------------------------------------------------------- */
 #define DEFAULT_SPEED_KP                 0.8f
 #define DEFAULT_SPEED_KI                 0.05f
+#define SPEED_PI_KP_MAX                  10.0f
+#define SPEED_PI_KI_MAX                  10.0f
 #define DEFAULT_BASE_PWM_1               640U
 #define DEFAULT_BASE_PWM_2               660U
 #define DEFAULT_BASE_PWM_3               680U

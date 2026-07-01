@@ -73,8 +73,8 @@ bool ConfigSnapshot_Validate(const PersistentConfig_t *cfg)
     if (!isfinite(cfg->kp) || !isfinite(cfg->ki)) return false;
     if (!isfinite(cfg->ramp_up) || !isfinite(cfg->ramp_down)) return false;
 
-    if (cfg->kp < 0.0f || cfg->kp > 100.0f) return false;
-    if (cfg->ki < 0.0f || cfg->ki > 100.0f) return false;
+    if (cfg->kp < 0.0f || cfg->kp > SPEED_PI_KP_MAX) return false;
+    if (cfg->ki < 0.0f || cfg->ki > SPEED_PI_KI_MAX) return false;
 
     if (cfg->ramp_up <= 0.0f || cfg->ramp_up > 10000.0f) return false;
     if (cfg->ramp_down <= 0.0f || cfg->ramp_down > 10000.0f) return false;

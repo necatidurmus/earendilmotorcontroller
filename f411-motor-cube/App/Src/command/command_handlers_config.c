@@ -65,6 +65,14 @@ bool CommandHandlers_Config_Handle(char *cmd)
         if (!isfinite(ki)) { UartProtocol_Print("\r\n[ERR] nan/inf rejected"); return true; }
         while (*end2 == ' ') end2++;
         if (*end2 != '\0') { UartProtocol_Print("\r\n[ERR] Trailing garbage"); return true; }
+        if (kp < 0.0f || kp > SPEED_PI_KP_MAX) {
+            UartProtocol_Printf("\r\n[ERR] Kp out of range (0..%ld)", (long)(SPEED_PI_KP_MAX * 1000.0f));
+            return true;
+        }
+        if (ki < 0.0f || ki > SPEED_PI_KI_MAX) {
+            UartProtocol_Printf("\r\n[ERR] Ki out of range (0..%ld)", (long)(SPEED_PI_KI_MAX * 1000.0f));
+            return true;
+        }
         SpeedPI_SetKp(kp);
         SpeedPI_SetKi(ki);
         UartProtocol_Printf("\r\n[OK] Kp_m=%ld Ki_m=%ld",
@@ -78,12 +86,18 @@ bool CommandHandlers_Config_Handle(char *cmd)
         if (s->phase == PHASE_RUNNING || s->phase == PHASE_NEUTRAL) {
             UartProtocol_Print("\r\n[ERR] Stop motor first"); return true;
         }
+        if (fv < 0.0f || fv > SPEED_PI_KP_MAX) {
+            UartProtocol_Printf("\r\n[ERR] Kp out of range (0..%ld)", (long)(SPEED_PI_KP_MAX * 1000.0f)); return true;
+        }
         SpeedPI_SetKp(fv); UartProtocol_Printf("\r\n[OK] Kp_m=%ld", (long)(fv * 1000.0f)); return true;
     }
     fv = AppUtils_ParseFloatAfter(cmd, "ki ", &ok);
     if (ok) {
         if (s->phase == PHASE_RUNNING || s->phase == PHASE_NEUTRAL) {
             UartProtocol_Print("\r\n[ERR] Stop motor first"); return true;
+        }
+        if (fv < 0.0f || fv > SPEED_PI_KI_MAX) {
+            UartProtocol_Printf("\r\n[ERR] Ki out of range (0..%ld)", (long)(SPEED_PI_KI_MAX * 1000.0f)); return true;
         }
         SpeedPI_SetKi(fv); UartProtocol_Printf("\r\n[OK] Ki_m=%ld", (long)(fv * 1000.0f)); return true;
     }
