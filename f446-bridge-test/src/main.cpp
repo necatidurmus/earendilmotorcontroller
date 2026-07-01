@@ -128,7 +128,7 @@ static bool isDangerousServiceCmd(const char* cmd) {
     static const char* dangerousPrefixes[] = {
         "gatetest ", "base ", "boost ", "pi ",
         "kp ", "ki ", "kickduty ", "kickms ",
-        "ramprate ", "rampms ", "defpwm ",
+        "ramp ", "ramprate ", "rampms ", "defpwm ",
         "map set ",
         NULL
     };
