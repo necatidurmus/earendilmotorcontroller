@@ -128,6 +128,20 @@ bool CommandHandlers_Config_Handle(char *cmd)
         return true;
     }
 
+    /* --- ramp on / ramp off (must precede generic "ramp " parser) --- */
+    if (strcmp(cmd, "ramp on") == 0) {
+        if (s->phase == PHASE_RUNNING || s->phase == PHASE_NEUTRAL) {
+            UartProtocol_Print("\r\n[ERR] Stop motor first"); return true;
+        }
+        s->ramp_enabled = true;  UartProtocol_Print("\r\n[OK] Ramp ON");  return true;
+    }
+    if (strcmp(cmd, "ramp off") == 0) {
+        if (s->phase == PHASE_RUNNING || s->phase == PHASE_NEUTRAL) {
+            UartProtocol_Print("\r\n[ERR] Stop motor first"); return true;
+        }
+        s->ramp_enabled = false; UartProtocol_Print("\r\n[OK] Ramp OFF"); return true;
+    }
+
     /* --- ramp <up> <down> --- */
     if (AppUtils_StartsWith(cmd, "ramp ")) {
         if (s->phase == PHASE_RUNNING || s->phase == PHASE_NEUTRAL) {
@@ -567,7 +581,7 @@ bool CommandHandlers_Config_Handle(char *cmd)
         return true;
     }
 
-    /* --- kick / ramp config commands --- */
+    /* --- kick config commands --- */
     if (strcmp(cmd, "kick on") == 0) {
         if (s->phase == PHASE_RUNNING || s->phase == PHASE_NEUTRAL) {
             UartProtocol_Print("\r\n[ERR] Stop motor first"); return true;
@@ -579,18 +593,6 @@ bool CommandHandlers_Config_Handle(char *cmd)
             UartProtocol_Print("\r\n[ERR] Stop motor first"); return true;
         }
         s->kick_enabled = false; UartProtocol_Print("\r\n[OK] Kick OFF"); return true;
-    }
-    if (strcmp(cmd, "ramp on") == 0) {
-        if (s->phase == PHASE_RUNNING || s->phase == PHASE_NEUTRAL) {
-            UartProtocol_Print("\r\n[ERR] Stop motor first"); return true;
-        }
-        s->ramp_enabled = true;  UartProtocol_Print("\r\n[OK] Ramp ON");  return true;
-    }
-    if (strcmp(cmd, "ramp off") == 0) {
-        if (s->phase == PHASE_RUNNING || s->phase == PHASE_NEUTRAL) {
-            UartProtocol_Print("\r\n[ERR] Stop motor first"); return true;
-        }
-        s->ramp_enabled = false; UartProtocol_Print("\r\n[OK] Ramp OFF"); return true;
     }
 
     v = AppUtils_ParseLongAfter(cmd, "kickduty ", &ok);
