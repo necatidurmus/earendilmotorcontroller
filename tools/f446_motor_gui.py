@@ -435,8 +435,13 @@ class App(tk.Tk):
         # Buttons
         btn_row = ttk.Frame(parent)
         btn_row.grid(row=row, column=0, columnspan=11, pady=(8, 0), sticky="ew")
-        ttk.Button(btn_row, text="Apply All", command=self._apply_pi).pack(side="left", padx=4)
+        self._apply_btn = ttk.Button(btn_row, text="Apply All", command=self._apply_pi)
+        self._apply_btn.pack(side="left", padx=4)
         ttk.Button(btn_row, text="Read", command=self._read_pi).pack(side="left", padx=4)
+        ttk.Button(btn_row, text="Save Config", command=self._save_config).pack(side="left", padx=4)
+        ttk.Button(btn_row, text="Load Config", command=self._load_config).pack(side="left", padx=4)
+        ttk.Label(btn_row, text="(Apply→RAM only, Save→flash)",
+                  foreground="gray").pack(side="left", padx=(8, 0))
 
     def _apply_pi(self):
         """Send PI tuning parameters to F411 (auto-unlocks F446 service)."""
@@ -461,10 +466,43 @@ class App(tk.Tk):
         self.after(290, lambda: self._send(
             "m1 boost " + " ".join(map(str, boost)) + f" {boost_ms}"))
         self.after(360, lambda: self._send(f"m1 ramp {ramp_up:.0f} {ramp_down:.0f}"))
+        self._log("Applied PI tuning to RAM. Use Save Config to persist after reset.")
 
     def _read_pi(self):
         """Request current PI tuning params from F411 via spstat."""
         self._send("m1 spstat")
+
+    def _save_config(self):
+        """Send savecfg to F411 to persist current runtime config to flash.
+        Requires bridge service unlock if service lock is enabled."""
+        if not messagebox.askyesno(
+            "Save Config",
+            "Save current runtime settings to F411 flash?\n\n"
+            "This sends: m1 savecfg\n\n"
+            "Requires bridge service unlock if service lock is enabled.\n"
+            "Motor must be stopped.\n\n"
+            "Continue?"
+        ):
+            return
+        self._send("bridge unlock_service CURRENT_LIMITED_BENCH_SUPPLY")
+        self.after(200, lambda: self._send("m1 savecfg"))
+        self._log("Save Config command sent: m1 savecfg")
+
+    def _load_config(self):
+        """Send loadcfg to F411 to load saved config from flash into RAM.
+        Requires bridge service unlock if service lock is enabled."""
+        if not messagebox.askyesno(
+            "Load Config",
+            "Load saved config from F411 flash into RAM?\n\n"
+            "This sends: m1 loadcfg\n\n"
+            "Requires bridge service unlock if service lock is enabled.\n"
+            "Motor must be stopped.\n\n"
+            "Continue?"
+        ):
+            return
+        self._send("bridge unlock_service CURRENT_LIMITED_BENCH_SUPPLY")
+        self.after(200, lambda: self._send("m1 loadcfg"))
+        self._log("Load Config command sent: m1 loadcfg")
 
     # ── Keyboard shortcuts ────────────────────────────────────────────
 
