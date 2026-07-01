@@ -116,6 +116,7 @@ static bool isDangerousServiceCmd(const char* cmd) {
     static const char* dangerous[] = {
         "gatetest", "identify", "test", "scan",
         "savecfg", "loadcfg", "saveall", "save",
+        "erasecfg", "defaults",
         /* Map-changing commands (map default is safe, in passthrough) */
         "map set", "map apply", "map reset",
         "map save", "map load", "map edit", "map discard",
@@ -129,6 +130,7 @@ static bool isDangerousServiceCmd(const char* cmd) {
         "gatetest ", "base ", "boost ", "pi ",
         "kp ", "ki ", "kickduty ", "kickms ",
         "ramp ", "ramprate ", "rampms ", "defpwm ",
+        "brake ", "telper ",
         "map set ",
         NULL
     };
@@ -146,7 +148,7 @@ static bool isDirectPassthrough(const char* cmd) {
         "forward", "backward", "stop", "s", "x", "brake",
         "mode", "rpm", "pwm", "h", "?",
         "kick on", "kick off", "ramp on", "ramp off",
-        "defaults", "map default", "mapreset", "reload",
+        "map default", "mapreset", "reload",
         "debug on", "debug off", "dbg on", "dbg off",
         "mode duty", "mode speed", "mode normal", "mode control",
         "pid on", "pid off",

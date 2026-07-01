@@ -1,6 +1,6 @@
 /* ============================================================
  * App/Inc/app_config.h
- * Tunables, defaults, and the F411 <-> H7 protocol constants.
+ * Tunables, defaults, and the F411 protocol constants.
  * ============================================================ */
 #ifndef APP_CONFIG_H
 #define APP_CONFIG_H

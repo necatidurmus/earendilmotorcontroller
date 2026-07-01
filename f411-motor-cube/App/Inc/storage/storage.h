@@ -69,6 +69,10 @@ bool Storage_EraseConfig(void);
 /* Returns true if at least one valid config record exists in flash. */
 bool Storage_HasValidConfig(void);
 
+/* Returns the sequence number of the latest valid config record.
+ * Returns 0 if no valid config exists. */
+uint32_t Storage_GetConfigSequence(void);
+
 /* ---- Legacy API (backward-compatible wrappers) ---- */
 bool Storage_SaveConfigLegacy(uint16_t kickDuty, uint16_t kickMs,
                               uint16_t rampStep, uint16_t rampIntervalMs,

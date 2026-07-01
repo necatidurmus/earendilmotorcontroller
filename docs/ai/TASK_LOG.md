@@ -4,6 +4,17 @@ Agent task history. Newest entries on top.
 
 ---
 
+## 2026-07-01 — Comprehensive audit and controlled fixes
+
+- **Purpose:** Audit all 10 planned fixes, apply only what's missing, verify builds
+- **Read:** `command_handlers_config.c`, `motion_safety.c`, `speed_pi.c`, `config_snapshot.c`, `storage.c/h`, `app_config.h`, `app_state.h`, `app_main.c`, `f446-bridge-test/src/main.cpp`, `tools/f446_motor_gui.py`, `docs/PROTOCOL.md`, `docs/ai/MEMORY_BANK.md`
+- **Changed:** `App/Src/command/command_handlers_config.c` (Flash lifecycle cmds now check `MotionControl_ServiceBusy()` too — savecfg/save/saveall/loadcfg/erasecfg/defaults/map save), `f446-bridge-test/src/main.cpp` (added `erasecfg`, `defaults` to dangerous exact list; added `brake `, `telper ` to dangerous prefixes; removed `defaults` from direct passthrough), `App/Src/protocol/uart_protocol.c` (updated H7/terminal.py comment → F446 bridge), `App/Inc/app/app_config.h` (updated H7 comment)
+- **Why:** Flash/config operations could run while service task was active (identify/gatetest). F446 bridge was missing some dangerous commands. Legacy comment references updated.
+- **Build/test:** F411 `pio run` SUCCESS (RAM 2.2%, Flash 10.4%), F446 `pio run` SUCCESS (RAM 1.7%, Flash 4.2%), `py_compile` GUI OK
+- **Remaining risks:** Hardware verification not done; ramp on/off already correct; PI limits already consistent
+
+---
+
 ## 2026-07-01 — Config persistence diagnostics
 
 - **Purpose:** Improve config persistence visibility: sequence numbers in output, savecfg post-write verification, clearer failure messages

@@ -406,8 +406,8 @@ bool CommandHandlers_Config_Handle(char *cmd)
         }
 
         if (strcmp(sub, " save") == 0) {
-            if (s->phase == PHASE_RUNNING || s->phase == PHASE_NEUTRAL) {
-                UartProtocol_Print("\r\n[ERR] Stop motor first");
+            if (s->phase != PHASE_STOPPED || MotionControl_ServiceBusy()) {
+                UartProtocol_Print("\r\n[ERR] Stop motor and exit service mode before flash operation");
                 return true;
             }
             uint8_t map[8];
@@ -445,8 +445,8 @@ bool CommandHandlers_Config_Handle(char *cmd)
     /* Legacy compat: "save" / "savecfg" / "saveall" */
     if (strcmp(cmd, "save") == 0 || strcmp(cmd, "savecfg") == 0 ||
         strcmp(cmd, "saveall") == 0) {
-        if (s->phase == PHASE_RUNNING || s->phase == PHASE_NEUTRAL) {
-            UartProtocol_Print("\r\n[ERR] Stop motor first");
+        if (s->phase != PHASE_STOPPED || MotionControl_ServiceBusy()) {
+            UartProtocol_Print("\r\n[ERR] Stop motor and exit service mode before flash/config operation");
             return true;
         }
         PersistentConfig_t cfg;
@@ -512,8 +512,8 @@ bool CommandHandlers_Config_Handle(char *cmd)
 
     /* --- savecfg / loadcfg / erasecfg / cfg / defaults --- */
     if (strcmp(cmd, "loadcfg") == 0) {
-        if (s->phase == PHASE_RUNNING || s->phase == PHASE_NEUTRAL) {
-            UartProtocol_Print("\r\n[ERR] Stop motor first"); return true;
+        if (s->phase != PHASE_STOPPED || MotionControl_ServiceBusy()) {
+            UartProtocol_Print("\r\n[ERR] Stop motor and exit service mode before flash/config operation"); return true;
         }
         PersistentConfig_t cfg;
         if (Storage_LoadConfig(&cfg)) {
@@ -527,8 +527,8 @@ bool CommandHandlers_Config_Handle(char *cmd)
         return true;
     }
     if (strcmp(cmd, "erasecfg") == 0) {
-        if (s->phase == PHASE_RUNNING || s->phase == PHASE_NEUTRAL) {
-            UartProtocol_Print("\r\n[ERR] Stop motor first"); return true;
+        if (s->phase != PHASE_STOPPED || MotionControl_ServiceBusy()) {
+            UartProtocol_Print("\r\n[ERR] Stop motor and exit service mode before flash/config operation"); return true;
         }
         if (Storage_EraseConfig()) {
             UartProtocol_Print("\r\n[OK] Config erased from Flash — runtime unchanged");
@@ -571,8 +571,8 @@ bool CommandHandlers_Config_Handle(char *cmd)
         return true;
     }
     if (strcmp(cmd, "defaults") == 0) {
-        if (s->phase == PHASE_RUNNING || s->phase == PHASE_NEUTRAL) {
-            UartProtocol_Print("\r\n[ERR] Stop motor first"); return true;
+        if (s->phase != PHASE_STOPPED || MotionControl_ServiceBusy()) {
+            UartProtocol_Print("\r\n[ERR] Stop motor and exit service mode before flash/config operation"); return true;
         }
         /* Reset AppState fields to defaults. */
         s->kick_enabled = false;

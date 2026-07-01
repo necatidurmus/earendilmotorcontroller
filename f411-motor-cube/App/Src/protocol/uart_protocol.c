@@ -405,7 +405,7 @@ void UartProtocol_Print(const char *s)
 
     /* Drop the entire message if the ring does not have enough room.
      * Partial writes would produce corrupted telemetry lines that
-     * confuse the H7 and terminal.py parsers. */
+     * confuse the F446 bridge parser. */
     uint16_t free = tx_ring_free();
     if (len > free) {
         /* ISSUE-041: count the dropped message so telemetry can
