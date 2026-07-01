@@ -131,7 +131,7 @@ Default cadence 100 ms (`telper <ms>` to change).
 ### Compact (default)
 
 ```
-RPM:<measured>,T:<target>,D:<duty>,DIR:<F|R|N>,APP_PH:<phase>,SP:<0|1>,BRAKE:<0|1>,FC:<fault>,H:<hall>,PWM_SET:<targetDuty>,PWM_ACT:<actualDuty>,QDROP:<cmdDrops>
+RPM:<measured>,T:<target>,D:<duty>,DIR:<F|R|N>,APP_PH:<phase>,SP:<0|1>,BRAKE:<0|1>,FC:<fault>,H:<hall>,PWM_SET:<targetDuty>,PWM_ACT:<actualDuty>,QDROP:<cmdDrops>,RXB:<rxBytes>
 ```
 
 | Field | Meaning |
@@ -142,6 +142,7 @@ RPM:<measured>,T:<target>,D:<duty>,DIR:<F|R|N>,APP_PH:<phase>,SP:<0|1>,BRAKE:<0|
 | `DIR` | `F` / `R` / `N` |
 | `APP_PH` | app motor phase (0=STOP,1=RUN,2=BRAKE,3=NEUTRAL,4=FAULT) |
 | `QDROP` | command queue overflow drop count |
+| `RXB` | total RX bytes drained from DMA buffer (diagnostic) |
 | `SP` | 1 if speed (PI) mode, else 0 |
 | `BRAKE` | 1 if brake phase, else 0 |
 | `FC` | fault code (FaultManager) |
@@ -162,7 +163,7 @@ motor UART line, strips `\r`, splits on `\n`, and prefixes the line
 with the motor name before forwarding to the PC:
 
 ```
-FL|RPM:12,T:10,D:34,DIR:F,APP_PH:1,SP:1,BRAKE:0,FC:0,H:5,PWM_SET:34,PWM_ACT:34,QDROP:0
+FL|RPM:12,T:10,D:34,DIR:F,APP_PH:1,SP:1,BRAKE:0,FC:0,H:5,PWM_SET:34,PWM_ACT:34,QDROP:0,RXB:1234
 FR|...
 RL|...
 RR|...
@@ -171,7 +172,7 @@ RR|...
 The F446 bridge (`f446-bridge-test/`) and `tools/f446_motor_gui.py` use
 the same `KEY:VALUE` telemetry format. The GUI parses comma-separated
 fields: `RPM`, `T`, `D`, `DIR`, `APP_PH`, `SP`, `BRAKE`, `FC`, `H`,
-`PWM_SET`, `PWM_ACT`, `QDROP` (debug also: `RF`, `TCMD`, `TRMP`, `ERR`,
+`PWM_SET`, `PWM_ACT`, `QDROP`, `RXB` (debug also: `RF`, `TCMD`, `TRMP`, `ERR`,
 `SPD_PH`).
 
 ## Speed mode heartbeat requirement (ISSUE-020)
@@ -248,5 +249,5 @@ RPM:9,T:10,D:36,DIR:F,APP_PH:1,SP:1,BRAKE:0,FC:0,H:5,PWM_SET:36,PWM_ACT:36,QDROP
 Via H7 wheelbridge (PC sees):
 
 ```
-FL|RPM:9,T:10,D:36,DIR:F,APP_PH:1,SP:1,BRAKE:0,FC:0,H:5,PWM_SET:36,PWM_ACT:36,QDROP:0
+FL|RPM:9,T:10,D:36,DIR:F,APP_PH:1,SP:1,BRAKE:0,FC:0,H:5,PWM_SET:36,PWM_ACT:36,QDROP:0,RXB:1234
 ```

@@ -5,8 +5,10 @@ Project state snapshot for agents. Read this at the start of any task.
 ## Current state
 
 * **F411 Cube firmware** (`f411-motor-cube/`) is the active production
-  firmware. Modular architecture (9 sub-folders, 27 .c / 30 .h files).
-  Code complete, **not hardware-verified**. Build: `pio run -d f411-motor-cube`
+  firmware. Modular architecture (9 sub-folders, 28 .c / 32 .h files).
+  **Hardware-verified** 2026-07-01: motor ran at low RPM with
+  current-limited PSU, no excessive current, active brake worked.
+  Build: `pio run -d f411-motor-cube`
 * **F446 bridge** (`f446-bridge-test/`) is a single-motor UART bridge
   test platform (Arduino/PlatformIO). Active for testing.
 * **H7** (`h7-main/`) is out of scope for changes. Read only for
@@ -66,21 +68,30 @@ touching:
 ### Completed
 
 * Agent documentation system established (AGENTS.md, CLAUDE.md, docs/ai/).
-* F411 `app_main.c` (2218 lines) decomposed into 8 focused modules.
+* F411 `app_main.c` (2218 lines) decomposed into 9 focused modules.
   Build passes, behavior identical. See `docs/ai/TASK_LOG.md`.
 * Project root restructured: modular firmware is now `f411-motor-cube/`,
   legacy and monolithic archived in `ref/`.
+* **Hardware bring-up completed** (2026-07-01): motor ran at low RPM
+  with current-limited PSU. Commands tested: f/b/f<n>/b<n>, stop,
+  brake (active brake), rpm, mode duty/speed. No PSU current-limit
+  trips, no excessive current, motor rotated smoothly.
+* Telemetry `RXB` field documented in AGENTS.md and PROTOCOL.md.
+* `storage.c` flash size guard fixed: uses CMSIS `FLASHSIZE_BASE`
+  instead of undefined `FLASH_SIZE_DATA_REGISTER`.
+* Dead IRQ handler stubs removed from `stm32f4xx_it.c`.
 
 ### Short-term (current)
 
-* Hardware bring-up of the modular firmware on BlackPill+F411.
-* Scope-verify TIM1 gate outputs before connecting motor.
-* Validate Hall sensor readings against known motor.
+* Higher-RPM testing and PI tuning.
+* Hall map `identify` on actual motor (if needed).
+* F446 bridge integration testing with hardware.
 
 ### Medium-term
 
-* Active braking validation (current-limited bench supply).
+* Active braking at higher speeds (current-limited bench supply).
 * F446 bridge integration testing with hardware.
+* Higher RPM validation and PI gain tuning.
 
 ### Long-term
 

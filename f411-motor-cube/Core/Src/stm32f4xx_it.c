@@ -88,15 +88,11 @@ void TIM1_UP_TIM10_IRQHandler(void)
     HAL_TIM_IRQHandler(&htim1);
 }
 
-void TIM1_TRG_COM_TIM11_IRQHandler(void)
-{
-    HAL_TIM_IRQHandler(&htim1);
-}
-
-void TIM1_CC_IRQHandler(void)
-{
-    HAL_TIM_IRQHandler(&htim1);
-}
+/* The TRG_COM/CC interrupt handlers are not used by this firmware.
+ * TIM1 CC/trigger events are not needed for the gate-drive approach
+ * (high-side via CCxE, low-side via GPIO).  Removing these stubs
+ * avoids confusing CubeMX regeneration — if they are needed later they
+ * can be re-added with the corresponding NVIC enable. */
 
 void TIM4_IRQHandler(void)
 {
@@ -127,7 +123,5 @@ void TIM6_DAC_IRQHandler(void)
      * compatibility.  The 1 kHz scheduler tick is driven by SysTick. */
 }
 
-void EXTI15_10_IRQHandler(void)
-{
-    HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_15);
-}
+/* EXTI15_10 is not used — no GPIO on lines 10..15 is configured for
+ * EXTI in this firmware.  The handler was a stale .ioc leftover. */

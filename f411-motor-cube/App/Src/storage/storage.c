@@ -165,15 +165,16 @@ static bool flash_erase_sector(void)
            && (sector_err == 0xFFFFFFFFU);
 }
 
-/* ---- Flash size runtime guard ---- */
+/* ---- Flash size runtime guard ----
+ * FLASHSIZE_BASE (0x1FFF7A22) is defined in the STM32F4 CMSIS device
+ * header (stm32f4xx.h) for all F4 variants.  The 16-bit register at
+ * that address holds the flash size in KB.  We require >= 512 KB
+ * because the storage sector starts at 0x08060000 (sector 7), which
+ * is only valid on the 512 KB F411CE variant. */
 static bool flash_size_ok(void)
 {
-#if defined(FLASH_SIZE_DATA_REGISTER)
-    uint16_t flash_kb = *(volatile uint16_t *)FLASH_SIZE_DATA_REGISTER;
+    uint16_t flash_kb = *(volatile uint16_t *)FLASHSIZE_BASE;
     return (flash_kb >= 512U);
-#else
-    return true;
-#endif
 }
 
 /* ---- Config record helpers ---- */

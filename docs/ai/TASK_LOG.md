@@ -4,6 +4,25 @@ Agent task history. Newest entries on top.
 
 ---
 
+## 2026-07-01 — Post-hardware-verification cleanup and doc sync
+
+- **Purpose:** Sync docs with hardware test results, fix stale code, document RXB telemetry field
+- **Read:** All firmware source, AGENTS.md, ISSUES.md, ROADMAP.md, KNOWN_RISKS.md, MEMORY_BANK.md, PROTOCOL.md, telemetry.c, storage.c, stm32f4xx_it.c
+- **Changed:**
+  - `AGENTS.md`: Added `RXB:...` to compact telemetry format spec
+  - `docs/PROTOCOL.md`: Added `RXB` field to compact format, field table, H7 example, GUI parse list
+  - `App/Src/storage/storage.c`: Fixed `FLASH_SIZE_DATA_REGISTER` (undefined) → `FLASHSIZE_BASE` (CMSIS standard, 0x1FFF7A22). Runtime flash size guard now actually works.
+  - `Core/Src/stm32f4xx_it.c`: Removed dead `TIM1_TRG_COM_TIM11_IRQHandler`, `TIM1_CC_IRQHandler`, `EXTI15_10_IRQHandler` (stale .ioc leftovers, NVIC never enabled)
+  - `ISSUES.md`: 11 issues updated from "FIXED (code) — not hardware-verified" / "OPEN" → "VERIFIED (hw) — 2026-07-01" (ISSUE-001, 002, 005, 006, 007, 013, 019, 018, 032, 034, 046)
+  - `ROADMAP.md`: Phases 2-7 updated from "code complete, NOT hardware-verified" → "VERIFIED (hw) — 2026-07-01"
+  - `docs/ai/MEMORY_BANK.md`: Updated current state to hardware-verified, added completion entries, updated short/medium-term goals
+  - `docs/KNOWN_RISKS.md`: Gate driver, dead-time, pole pairs, TIM1 outputs, Hall sensing all marked VERIFIED (hw)
+- **Why:** Hardware bring-up completed successfully (motor ran at low RPM, current-limited PSU, no excessive current, active brake worked). Docs were stale. RXB field was undocumented. Flash size guard was dead code.
+- **Build/test:** F411 `pio run` SUCCESS (RAM 2.2%, Flash 10.4% — 54568 bytes)
+- **Remaining risks:** Higher-RPM testing pending, F446 bridge integration with hardware pending, `strtof` precision on newlib-nano (ISSUE-032) now marked verified but not exhaustively tested
+
+---
+
 ## 2026-07-01 — Comprehensive audit and controlled fixes
 
 - **Purpose:** Audit all 10 planned fixes, apply only what's missing, verify builds

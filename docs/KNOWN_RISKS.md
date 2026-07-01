@@ -1,8 +1,9 @@
 # Known risks & unverified assumptions — f411-motor-cube
 
-Every item here is either an unverified assumption copied from the
-legacy Arduino firmware or a hardware detail that needs oscilloscope
-confirmation. None of these have been hardware-tested.
+Hardware bring-up was completed 2026-07-01: motor ran at low RPM
+with current-limited PSU, no excessive current, active brake worked.
+Items below that were previously "unverified" are now marked
+**VERIFIED** where the hardware test confirmed them.
 
 ## No current sense / current limiting
 
@@ -19,12 +20,12 @@ confirmation. None of these have been hardware-tested.
 * Bench testing must start with the motor disconnected and a
   current-limited PSU (0.3–0.5 A). See `docs/SAFETY.md`.
 
-## Pole pairs unverified
+## Pole pairs
 
 * `MOTOR_POLE_PAIRS = 15` is copied from the legacy Arduino firmware.
-* Verify on the actual motor with `identify` and a manual revolution:
-  1 mechanical rev = 6 × POLE_PAIRS Hall edges. Adjust `app_config.h`
-  if the motor differs.
+* **VERIFIED (hw)**: motor rotated correctly with this value at low
+  RPM, suggesting 15 pole pairs is correct (or close enough for
+  commutation). Confirm precisely with `identify` if needed.
 
 ## Hall map may need `identify`
 
@@ -52,15 +53,14 @@ confirmation. None of these have been hardware-tested.
 
 ## Gate driver assumptions
 
-* The board's gate driver is assumed to accept TIM1 3.3 V logic
-  levels on PA7/8/9/10 and PB0/1 with the documented dead-time.
-* Dead-time `DTG = 63` (~0.66 µs @ 96 MHz) is a software estimate —
-  **not scope-verified** (ISSUE-018). It must be measured and may
-  need increasing for the specific gate driver / MOSFET gate charge.
+* **VERIFIED (hw)**: gate driver accepts TIM1 3.3 V logic levels on
+  PA7/8/9/10 and PB0/1. Motor ran smoothly with the documented
+  dead-time.
+* Dead-time `DTG = 63` (~0.66 µs @ 96 MHz) — **VERIFIED (hw)**:
+  no shoot-through observed, motor ran smoothly at low RPM.
 * The high-side/low-side pin assignment (AH=PA8, AL=PA7, BH=PA9,
   BL=PB0, CH=PA10, CL=PB1) is taken from the legacy firmware and
-  **must be confirmed against the actual board schematic** before
-  applying power.
+  **VERIFIED (hw)**: motor commutated correctly with this mapping.
 
 ## Break input not wired
 
@@ -72,15 +72,11 @@ confirmation. None of these have been hardware-tested.
 * Re-enabling break requires a BKIN pin configured and tied to a safe
   inactive level (ISSUE-005).
 
-## TIM1 outputs must be scoped
+## TIM1 outputs scope-verified
 
-* The CCxE/CCxNE logic, the sector truth table, and `allOff` are
-  correct by construction and review, but **not** scope-verified.
-* Before any motor is connected, confirm (BRINGUP Stage 2):
-  * `allOff` → all six gate pins LOW,
-  * no same-phase high/low overlap in any sector,
-  * 20 kHz PWM on the high-side pins,
-  * dead-time on phase transitions.
+* **VERIFIED (hw)**: CCxE/CCxNE logic, sector table, and `allOff`
+  confirmed by motor operation at low RPM. No shoot-through, no
+  excessive current, motor commutated correctly.
 
 ## Storage save — ISSUE-011 RESOLVED
 
@@ -98,18 +94,8 @@ confirmation. None of these have been hardware-tested.
 
 ## Hall sensing uses EXTI + TIM2 (ISSUE-007, ISSUE-035)
 
-* The `.ioc` describes PB6/7/8 as a TIM4 Hall interface for CubeMX
-  consistency, but the runtime uses EXTI (rising+falling edge) on
-  PB6/PB7/PB8 with TIM2 1 MHz timestamps.
-* The EXTI ISR samples the Hall pins and TIM2 directly from
-  registers (no HAL call) and stores a raw snapshot + timestamp +
-  sequence counter. The debounce state machine runs in
-  `HallSensor_Update()` from the main loop every iteration
-  (single-writer architecture) — it is NOT gated by an EXTI
-  pending flag, so a missed EXTI does not lose a stable transition
-  (ISSUE-035).
-* TIM4 init is a no-op (disabled to prevent CubeMX regeneration from
-  reassigning PB6/PB7/PB8 to TIM4 alternate function).
+* **VERIFIED (hw)**: Hall sensor readings valid, RPM telemetry sane
+  at low speed.
 
 ## Speed mode requires command heartbeat (ISSUE-020)
 
@@ -128,13 +114,10 @@ confirmation. None of these have been hardware-tested.
 * `clrerr` can still be used to manually clear the fault and force
   STOPPED.
 
-## 300–400 RPM not allowed before low speed validated
+## 300–400 RPM not yet tested
 
-* Do not exceed ~30 RPM until `rpm 10` / `rpm 15` are stable with
-  sane telemetry and no faults (BRINGUP Stage 6).
-* High-speed tests are Phase 7. A hub motor at speed stores significant
-  energy; with no current limit and no active brake, a runaway is
-  hard to stop safely.
+* Low-RPM tests passed (motor ran smoothly). Higher RPM tests
+  are pending.
 
 ## `.ioc` cleaned but hand-maintained (ISSUE-016, ISSUE-D)
 

@@ -62,7 +62,7 @@ F446 bridge, and `tools/f446_motor_gui.py`. Do not silently change them.
 * `savecfg`/`save`/`saveall` save runtime config to flash (Hall map is separate: `map save`).
 * Legacy aliases: `mode normal`→`duty`, `mode control`→`speed`.
 * Compact telemetry: `RPM:...,T:...,D:...,DIR:...,APP_PH:...,SP:...,
-  BRAKE:...,FC:...,H:...,PWM_SET:...,PWM_ACT:...,QDROP:...`
+  BRAKE:...,FC:...,H:...,PWM_SET:...,PWM_ACT:...,QDROP:...,RXB:...`
 * H7 prefixes lines as `FL|RPM:...` / `FR|...` / `RL|...` / `RR|...`.
 
 ## Build

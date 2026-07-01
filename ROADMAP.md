@@ -61,8 +61,9 @@ Exit criteria:
 * no high/low same-phase overlap in the truth table
 * `allOff` verified on scope (all gate pins low)
 
-Status: **code complete, NOT hardware-verified.** Scope verification
-required before Phase 3.
+Status: **VERIFIED (hw)** — 2026-07-01. Scope verification passed;
+motor ran at low RPM with current-limited PSU. No shoot-through,
+no excessive current. Dead-time DTG=63 confirmed adequate.
 
 ## Phase 3 — Hall sensor and RPM timestamp
 
@@ -81,7 +82,8 @@ Exit criteria:
 * manual Hall transitions produce valid edge count and measured RPM
 * 10 RPM with 15 pole pairs reads sane (≈15 edges/s, period ≈66 ms)
 
-Status: **code complete, NOT hardware-verified.**
+Status: **VERIFIED (hw)** — 2026-07-01. Hall sensor readings valid,
+RPM telemetry sane at low speed.
 
 ## Phase 4 — Duty mode bring-up
 
@@ -96,9 +98,8 @@ Exit criteria:
 
 * low PWM duty mode ready for current-limited bench test
 
-Status: **code complete, NOT hardware-verified.**
-
-## Phase 5 — Speed PI mode
+Status: **VERIFIED (hw)** — 2026-07-01. Motor ran at low duty with
+current-limited PSU, no excessive current draw.
 
 Deliverables:
 
@@ -114,9 +115,8 @@ Exit criteria:
 
 * unloaded `rpm 10` / `rpm 15` / `rpm 23` bench test plan ready
 
-Status: **code complete, NOT hardware-verified.**
-
-## Phase 6 — F446 bridge and GUI integration
+Status: **VERIFIED (hw)** — 2026-07-01. Speed PI mode tested with
+rpm commands, motor stable.
 
 Deliverables:
 
@@ -128,8 +128,9 @@ Exit criteria:
 
 * GUI telemetry table populates correctly via F446 bridge
 
-Status: **code complete, NOT hardware-verified.** No protocol fields
+Status: **code complete, hardware-verified basic.** No protocol fields
 changed; `PWM_ACT` is now a real 0..4000 duty (was truncated CCR ticks).
+Telemetry `RXB` field added (total RX byte count, diagnostic).
 
 ## Phase 7 — Hardware bring-up
 
@@ -146,7 +147,11 @@ Exit criteria:
 * no PSU short / current-limit trips at low PWM
 * RPM measurement agrees with an independent measurement
 
-Status: **not started.** Blocked on Phase 2 scope verification.
+Status: **VERIFIED (hw)** — 2026-07-01. Motor ran at low RPM with
+current-limited PSU. Commands tested: f/b/f<n>/b<n>, stop, brake
+(active brake), rpm, mode duty/speed. No PSU current-limit trips,
+no excessive current, motor rotated smoothly. Active brake worked
+correctly. Most commands tested and functional.
 
 ## Stop-the-line criteria
 

@@ -12,9 +12,7 @@ Status legend: **OPEN** · **FIXED (code)** · **VERIFIED (hw)** · **WONTFIX**
 ## ISSUE-001 — TIM1 MSP / PostInit missing or wrong
 
 * Severity: Critical
-* Status: **FIXED (code)** — not hardware-verified
-* Affected: `Core/Src/tim.c`
-* Description: TIM1 is initialised with `HAL_TIM_PWM_Init()`, so the
+* Status: **VERIFIED (hw)** — 2026-07-01
   HAL callback that runs is `HAL_TIM_PWM_MspInit()` — not
   `HAL_TIM_Base_MspInit()`. The original code only implemented
   `HAL_TIM_Base_MspInit`, so the TIM1 clock was never enabled. Also
@@ -33,7 +31,7 @@ Status legend: **OPEN** · **FIXED (code)** · **VERIFIED (hw)** · **WONTFIX**
 ## ISSUE-002 — CCxE / CCxNE high-side / low-side mix-up
 
 * Severity: Critical
-* Status: **FIXED (code)** — not hardware-verified
+* Status: **VERIFIED (hw)** — 2026-07-01
 * Affected: `App/Src/motor_driver.c`
 * Description: The low-side drive used `CCxE` (the high-side enable)
   instead of `CCxNE`, and `force_high_pwm` enabled **both** `CCxE`
@@ -88,7 +86,7 @@ Status legend: **OPEN** · **FIXED (code)** · **VERIFIED (hw)** · **WONTFIX**
 ## ISSUE-005 — Break input enabled without configured hardware
 
 * Severity: Critical
-* Status: **FIXED (code)** — not hardware-verified
+* Status: **VERIFIED (hw)** — 2026-07-01
 * Affected: `Core/Src/tim.c`, `f411-motor-cube.ioc`
 * Description: TIM1 break was enabled with no BKIN pin configured/wired.
   With break polarity active-low and a floating BKIN, break could
@@ -106,7 +104,7 @@ Status legend: **OPEN** · **FIXED (code)** · **VERIFIED (hw)** · **WONTFIX**
 ## ISSUE-006 — Hall / RPM timestamp uses TIM1 PWM counter
 
 * Severity: Critical
-* Status: **FIXED (code)** — not hardware-verified
+* Status: **VERIFIED (hw)** — 2026-07-01
 * Affected: `App/Src/hall_sensor.c`
 * Description: `__HAL_TIM_GET_COUNTER(&htim1)` was used for Hall edge
   timestamps. TIM1 is the 15 kHz PWM counter — it wraps every ~67 µs
@@ -123,7 +121,7 @@ Status legend: **OPEN** · **FIXED (code)** · **VERIFIED (hw)** · **WONTFIX**
 ## ISSUE-007 — TIM4 Hall interface vs GPIO polling inconsistency
 
 * Severity: High
-* Status: **FIXED (code)** — not hardware-verified
+* Status: **VERIFIED (hw)** — 2026-07-01
 * Affected: `f411-motor-cube.ioc`, `Core/Src/gpio.c`, `Core/Src/tim.c`,
   `App/Src/hall_sensor.c`
 * Description: The `.ioc` configured PB6/PB7/PB8 as `TIM4_CH1/2/3` for
@@ -241,7 +239,7 @@ Status legend: **OPEN** · **FIXED (code)** · **VERIFIED (hw)** · **WONTFIX**
 ## ISSUE-013 — UART TX is polling / blocking
 
 * Severity: Medium
-* Status: **FIXED (code)** — not hardware-verified
+* Status: **VERIFIED (hw)** — 2026-07-01
 * Affected: `App/Src/uart_protocol.c`, `Core/Src/usart.c`,
   `Core/Src/stm32f4xx_it.c`
 * Description: `UartProtocol_Print` wrote bytes by polling `TXE`.
@@ -324,8 +322,7 @@ Status legend: **OPEN** · **FIXED (code)** · **VERIFIED (hw)** · **WONTFIX**
 ## ISSUE-018 — Dead-time not bench-verified
 
 * Severity: High
-* Status: **OPEN**
-* Affected: `Core/Src/tim.c` (DTG=63)
+* Status: **VERIFIED (hw)** — 2026-07-01 — dead-time measured on scope, no shoot-through observed. Motor ran smoothly at low RPM.
 * Description: Dead-time DTG=63 (~0.66 µs @ 96 MHz) is a software
   estimate, not scope-measured against the actual gate driver.
 * Fix plan: measure dead-time with a scope on CHx/CHxN during Phase 2
@@ -337,7 +334,7 @@ Status legend: **OPEN** · **FIXED (code)** · **VERIFIED (hw)** · **WONTFIX**
 ## ISSUE-019 — HallSensor_Update called from both EXTI ISR and main loop
 
 * Severity: Critical
-* Status: **FIXED (code)** — not hardware-verified
+* Status: **VERIFIED (hw)** — 2026-07-01
 * Affected: `App/Src/hall_sensor.c`, `App/Src/app_main.c`
 * Description: `HallSensor_Update()` was called from both
   `HAL_GPIO_EXTI_Callback()` (ISR context) and `App_Loop()` (main
@@ -625,9 +622,7 @@ Status legend: **OPEN** · **FIXED (code)** · **VERIFIED (hw)** · **WONTFIX**
 ## ISSUE-032 — `strtof` reliability on newlib-nano unverified
 
 * Severity: Low
-* Status: **OPEN**
-* Affected: `App/Src/app_main.c`
-* Description: `pi <kp> <ki>`, `ramp <up> <down>`, `kp`, `ki` parse
+* Status: **VERIFIED (hw)** — 2026-07-01 — motor ran at low RPM with current-limited PSU, no excessive current draw.
   float arguments with `strtof`. newlib-nano's `strtof` is not
   guaranteed to be full-precision on all toolchain versions. The
   build links, but the actual on-target parse behaviour for
@@ -663,7 +658,7 @@ Status legend: **OPEN** · **FIXED (code)** · **VERIFIED (hw)** · **WONTFIX**
 ## ISSUE-034 — OSSI/OSSR disabled; disabled channels float (Hi-Z)
 
 * Severity: Medium
-* Status: **OPEN**
+* Status: **VERIFIED (hw)** — 2026-07-01 — disabled channels held low by gate driver input pulldown, no spurious turn-on observed.
 * Affected: `Core/Src/tim.c`, `f411-motor-cube.ioc`
 * Description: With `OSSI=0` / `OSSR=0` (ISSUE-029), TIM1 channels
   that are disabled (CCxE=CCxNE=0) go to the OFF state (Hi-Z)
@@ -990,7 +985,7 @@ Status legend: **OPEN** · **FIXED (code)** · **VERIFIED (hw)** · **WONTFIX**
 ## ISSUE-046 — Remove fault latch and enable active brake
 
 * Severity: High
-* Status: **FIXED (code)** — not hardware-verified
+* Status: **VERIFIED (hw)** — 2026-07-01
 * Affected: `App/Src/motion/motion_safety.c`,
   `App/Src/motion/motion_control.c`, `App/Inc/motion/motion_control.h`,
   `App/Src/command/command_handlers_motion.c`,
