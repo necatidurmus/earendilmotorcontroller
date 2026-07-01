@@ -14,7 +14,9 @@
 #include "bldc_commutation.h"
 #include "fault_manager.h"
 #include "storage.h"
+#include "config_snapshot.h"
 #include "motion_control.h"
+#include "telemetry.h"
 #include "uart_protocol.h"
 
 #include <string.h>
@@ -376,8 +378,19 @@ bool CommandHandlers_Config_Handle(char *cmd)
         }
 
         if (strcmp(sub, " save") == 0) {
-            UartProtocol_Print("\r\n[ERR] Persistent storage disabled in this build");
-            UartProtocol_Print("\r\n[INFO] Map lives in RAM only until reset");
+            if (s->phase == PHASE_RUNNING || s->phase == PHASE_NEUTRAL) {
+                UartProtocol_Print("\r\n[ERR] Stop motor first");
+                return true;
+            }
+            uint8_t map[8];
+            Commutation_GetMap(map);
+            if (Storage_SaveHallMap(map)) {
+                s->hall_map_dirty = false;
+                s->hall_map_source = 3U;  /* FLASH */
+                UartProtocol_Print("\r\n[OK] Hall map saved to flash");
+            } else {
+                UartProtocol_Print("\r\n[ERR] Hall map save failed");
+            }
             return true;
         }
 
@@ -401,10 +414,24 @@ bool CommandHandlers_Config_Handle(char *cmd)
         return true;
     }
 
-    /* Legacy compat: "save" */
+    /* Legacy compat: "save" / "savecfg" / "saveall" */
     if (strcmp(cmd, "save") == 0 || strcmp(cmd, "savecfg") == 0 ||
         strcmp(cmd, "saveall") == 0) {
-        UartProtocol_Print("\r\n[ERR] Persistent storage disabled in this build");
+        if (s->phase == PHASE_RUNNING || s->phase == PHASE_NEUTRAL) {
+            UartProtocol_Print("\r\n[ERR] Stop motor first");
+            return true;
+        }
+        PersistentConfig_t cfg;
+        ConfigSnapshot_FromRuntime(&cfg);
+        if (!ConfigSnapshot_Validate(&cfg)) {
+            UartProtocol_Print("\r\n[ERR] Config validation failed");
+            return true;
+        }
+        if (Storage_SaveConfig(&cfg)) {
+            UartProtocol_Print("\r\n[OK] Config saved");
+        } else {
+            UartProtocol_Print("\r\n[ERR] Config save failed");
+        }
         return true;
     }
 
@@ -448,27 +475,75 @@ bool CommandHandlers_Config_Handle(char *cmd)
         return true;
     }
 
-    /* --- savecfg / loadcfg / defaults --- */
+    /* --- savecfg / loadcfg / erasecfg / cfg / defaults --- */
     if (strcmp(cmd, "loadcfg") == 0) {
         if (s->phase == PHASE_RUNNING || s->phase == PHASE_NEUTRAL) {
             UartProtocol_Print("\r\n[ERR] Stop motor first"); return true;
         }
-        uint16_t kd, km, rs, ri, dp, bh;
-        if (Storage_LoadConfig(&kd, &km, &rs, &ri, &dp, &bh)) {
-            s->kick_duty = kd; s->kick_ms = km;
-            s->ramp_step = rs; s->ramp_interval_ms = ri;
-            s->default_pwm = dp; s->brake_hold_ms = bh;
-            MotionControl_ClampLoadedConfig();
+        PersistentConfig_t cfg;
+        if (Storage_LoadConfig(&cfg)) {
+            ConfigSnapshot_ApplyToRuntime(&cfg);
             UartProtocol_Print("\r\n[OK] Config loaded");
         } else {
-            UartProtocol_Print("\r\n[INFO] No saved config, defaults kept");
+            UartProtocol_Print("\r\n[INFO] No saved config");
         }
+        return true;
+    }
+    if (strcmp(cmd, "erasecfg") == 0) {
+        if (s->phase == PHASE_RUNNING || s->phase == PHASE_NEUTRAL) {
+            UartProtocol_Print("\r\n[ERR] Stop motor first"); return true;
+        }
+        if (Storage_EraseConfig()) {
+            UartProtocol_Print("\r\n[OK] Config erased");
+        } else {
+            UartProtocol_Print("\r\n[ERR] Config erase failed");
+        }
+        return true;
+    }
+    if (strcmp(cmd, "cfg") == 0) {
+        PersistentConfig_t cfg;
+        ConfigSnapshot_FromRuntime(&cfg);
+        float kp, ki;
+        SpeedPI_GetGains(&kp, &ki);
+        uint16_t base[SPEED_PI_BAND_COUNT];
+        SpeedPI_GetBasePwm(base);
+        uint16_t boost[SPEED_PI_BAND_COUNT];
+        uint16_t bstms;
+        SpeedPI_GetBoostPwm(boost, &bstms);
+        float rup, rdown;
+        SpeedPI_GetRampRates(&rup, &rdown);
+
+        UartProtocol_Printf("\r\nKp_m=%ld Ki_m=%ld",
+            (long)(kp * 1000.0f), (long)(ki * 1000.0f));
+        UartProtocol_Print("\r\nBase");
+        for (uint8_t i = 0U; i < SPEED_PI_BAND_COUNT; i++)
+            UartProtocol_Printf(" %u", (unsigned)base[i]);
+        UartProtocol_Print("\r\nBoost");
+        for (uint8_t i = 0U; i < SPEED_PI_BAND_COUNT; i++)
+            UartProtocol_Printf(" %u", (unsigned)boost[i]);
+        UartProtocol_Printf(" ms=%u", (unsigned)bstms);
+        UartProtocol_Printf("\r\nRamp up=%ld down=%ld",
+            (long)rup, (long)rdown);
+        UartProtocol_Printf("\r\nKick %s duty=%u ms=%u",
+            cfg.kick_enabled ? "ON" : "OFF",
+            (unsigned)cfg.kick_duty, (unsigned)cfg.kick_ms);
+        UartProtocol_Printf("\r\nDutyRamp %s step=%u ms=%u",
+            cfg.ramp_enabled ? "ON" : "OFF",
+            (unsigned)cfg.ramp_step, (unsigned)cfg.ramp_interval_ms);
+        UartProtocol_Printf("\r\nDefaultPWM=%u BrakeHoldMs=%u",
+            (unsigned)cfg.default_pwm, (unsigned)cfg.brake_hold_ms);
+        UartProtocol_Printf("\r\nTelPer=%lu",
+            (unsigned long)cfg.telemetry_interval_ms);
+        UartProtocol_Printf("\r\nFlash: %s",
+            Storage_HasValidConfig() ? "VALID" : "EMPTY");
+        UartProtocol_PrintNewline();
         return true;
     }
     if (strcmp(cmd, "defaults") == 0) {
         if (s->phase == PHASE_RUNNING || s->phase == PHASE_NEUTRAL) {
             UartProtocol_Print("\r\n[ERR] Stop motor first"); return true;
         }
+        /* Reset AppState fields to defaults. */
         s->kick_enabled = false;
         s->ramp_enabled = true;
         s->kick_duty = 960;
@@ -477,7 +552,27 @@ bool CommandHandlers_Config_Handle(char *cmd)
         s->ramp_interval_ms = 5;
         s->default_pwm = 1600;
         s->brake_hold_ms = BRAKE_HOLD_MS;
-        UartProtocol_Print("\r\n[OK] Defaults loaded into RAM (kick OFF, ramp ON)");
+        /* Reset SpeedPI to defaults. */
+        SpeedPI_SetKp(DEFAULT_SPEED_KP);
+        SpeedPI_SetKi(DEFAULT_SPEED_KI);
+        {
+            uint16_t bd[8] = {
+                DEFAULT_BASE_PWM_1, DEFAULT_BASE_PWM_2, DEFAULT_BASE_PWM_3, DEFAULT_BASE_PWM_4,
+                DEFAULT_BASE_PWM_5, DEFAULT_BASE_PWM_6, DEFAULT_BASE_PWM_7, DEFAULT_BASE_PWM_8
+            };
+            SpeedPI_SetBasePwm(bd);
+        }
+        {
+            uint16_t bd[8] = {
+                DEFAULT_BOOST_PWM_1, DEFAULT_BOOST_PWM_2, DEFAULT_BOOST_PWM_3, DEFAULT_BOOST_PWM_4,
+                DEFAULT_BOOST_PWM_5, DEFAULT_BOOST_PWM_6, DEFAULT_BOOST_PWM_7, DEFAULT_BOOST_PWM_8
+            };
+            SpeedPI_SetBoostPwm(bd, DEFAULT_BOOST_TIME_MS);
+        }
+        SpeedPI_SetRamp(DEFAULT_RAMP_UP_RPM_SEC, DEFAULT_RAMP_DOWN_RPM_SEC);
+        Telemetry_SetIntervalMs(TELEMETRY_INTERVAL_MS);
+        SpeedPI_Reset();
+        UartProtocol_Print("\r\n[OK] Defaults loaded into RAM (not saved to flash)");
         return true;
     }
 

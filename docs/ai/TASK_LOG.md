@@ -421,3 +421,23 @@ Agent task history. Newest entries on top.
 - **Next agent notes:** This is the foundation. The next recommended
   task is F411 app_main.c modularization phase-0: identify parser/state
   boundaries for extraction.
+
+## 2026-07-01 — Flash config persistence (ISSUE-011 fix)
+
+- **Purpose:** Enable `savecfg`/`save`/`saveall`/`map save` with safe Flash EEPROM emulation on STM32F411.
+- **Read:** storage.h, storage.c, command_handlers_config.c, speed_pi.h/c, app_state.h/c, app_main.c, app_status.c, telemetry.h, app_config.h
+- **Changed:**
+  - `App/Inc/storage/storage.h` — new `PersistentConfig_t` struct, full API (`SaveConfig`, `LoadConfig`, `EraseConfig`, `HasValidConfig`)
+  - `App/Src/storage/storage.c` — complete rewrite: append-only CFG2 records with FNV-1a CRC32, sequence numbers, no 128 KB buffer, hall map preservation
+  - `App/Inc/storage/config_snapshot.h` (NEW) — `ConfigSnapshot_FromRuntime`, `ApplyToRuntime`, `Validate`
+  - `App/Src/storage/config_snapshot.c` (NEW) — implementation
+  - `App/Src/app/app_main.c` — updated `App_Init` to use new `PersistentConfig_t` load API
+  - `App/Src/command/command_handlers_config.c` — `savecfg`/`save`/`saveall` now write to flash; `loadcfg` loads full config; `erasecfg` new command; `cfg` new command; `defaults` resets all config including PI/base/boost/ramp/telper; `map save` enabled
+  - `App/Src/app/app_status.c` — help text updated with new commands; status shows flash config state
+  - `docs/PROTOCOL.md` — updated command table
+  - `docs/KNOWN_RISKS.md` — ISSUE-011 marked resolved
+  - `ISSUES.md` — ISSUE-011 updated to reflect full fix
+  - `docs/F411_FLASH_CONFIG_PERSISTENCE.md` (NEW) — storage layout, test procedure
+- **Why:** ISSUE-011: old storage used 128 KB stack buffer (guaranteed overflow); save was disabled. New design uses small records, append-only scheme.
+- **Build/test:** `pio run -d f411-motor-cube` — **SUCCESS** (0 errors, 0 warnings for changed files; RAM 2.2%, Flash 10.2%)
+- **Remaining risks:** Flash save/erase not tested on real hardware; power loss during sector erase could corrupt both hall map and config (mitigated: hall map is rewritten first after erase). Hardware testing with motor disconnected required.

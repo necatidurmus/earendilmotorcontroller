@@ -84,14 +84,12 @@ confirmation. None of these have been hardware-tested.
   * 20 kHz PWM on the high-side pins,
   * dead-time on phase transitions.
 
-## Storage save unsafe until fixed
+## Storage save — ISSUE-011 RESOLVED
 
-* `save` / `savecfg` / `saveall` are disabled (ISSUE-011). The old
-  128 KB stack-buffer flash routine was removed.
-* Loading from flash is enabled and safely skips if the magic number is
-  missing, but without `save`, no data can be stored.
-* A safe implementation must use a static/.bss buffer or append-only
-  dual-sector scheme. Until then, configuration lives in RAM only.
+* `save` / `savecfg` / `saveall` / `map save` are now **enabled** (ISSUE-011 fixed).
+* Append-only record scheme with FNV-1a CRC32. No 128 KB buffer.
+* Hall map is preserved during config area compaction.
+* Motor must be stopped before save/erase. See `docs/F411_FLASH_CONFIG_PERSISTENCE.md`.
 
 ## UART TX is DMA ring buffer (ISSUE-013)
 

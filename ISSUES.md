@@ -201,20 +201,23 @@ Status legend: **OPEN** · **FIXED (code)** · **VERIFIED (hw)** · **WONTFIX**
 ## ISSUE-011 — Flash storage uses 128 KB stack buffer
 
 * Severity: Critical
-* Status: **FIXED (code)** (save disabled)
-* Affected: `App/Src/storage.c`
+* Status: **FIXED (code)**
+* Affected: `App/Src/storage/storage.c`
 * Description: `Storage_SaveHallMap` / `Storage_SaveConfig` allocated
   `uint8_t sector_buf[128 * 1024]` on the stack. Default stack is
   1 KB — a guaranteed stack overflow.
 * Evidence: `uint8_t sector_buf[FLASH_SECTOR_SIZE];` with
   `FLASH_SECTOR_SIZE = 128*1024`.
-* Fix: removed the buffer and the erase/rewrite path.
-  `Storage_SaveHallMap` / `Storage_SaveConfig` now return `false`
-  without touching flash. `save`/`savecfg`/`saveall` print
-  `[ERR] Flash storage disabled until safe implementation`. Load
-  (`reload`) is unchanged and safe (reads small records directly).
-* Acceptance: no large stack allocation remains; grep for
-  `128 * 1024` / `sector_buf` finds only the explanatory comment.
+* Fix: Replaced with append-only record scheme. No large buffer.
+  Config records (80 bytes) are written word-by-word directly to flash.
+  Hall map (16 bytes) is written similarly. When the config area is
+  full, the sector is erased, hall map is preserved by rewriting, and
+  a new config record is placed at the start. `savecfg`/`save`/`saveall`
+  now work correctly with motor-stopped guard. `map save` is also
+  enabled. CRC32 (FNV-1a) validation on every record.
+  See `docs/F411_FLASH_CONFIG_PERSISTENCE.md`.
+* Acceptance: no large stack allocation remains; `savecfg` and
+  `map save` work; flash persists across power-cycle.
 
 ---
 

@@ -35,6 +35,7 @@
 #include "fault_manager.h"
 #include "service_task.h"
 #include "storage.h"
+#include "config_snapshot.h"
 #include "app_status.h"
 #include "stm32f4xx_hal.h"
 
@@ -103,16 +104,13 @@ void App_Init(void)
 
     /* Load saved config from flash (if any). */
     {
-        uint16_t kd, km, rs, ri, dp, bh;
-        if (Storage_LoadConfig(&kd, &km, &rs, &ri, &dp, &bh)) {
-            s->kick_duty = kd;
-            s->kick_ms = km;
-            s->ramp_step = rs;
-            s->ramp_interval_ms = ri;
-            s->default_pwm = dp;
-            s->brake_hold_ms = bh;
+        PersistentConfig_t cfg;
+        if (Storage_LoadConfig(&cfg)) {
+            ConfigSnapshot_ApplyToRuntime(&cfg);
+            UartProtocol_Print("\r\n[OK] Config loaded from flash");
+        } else {
+            UartProtocol_Print("\r\n[INFO] No saved config, defaults kept");
         }
-        MotionControl_ClampLoadedConfig();
     }
 
     /* Print startup banner. */

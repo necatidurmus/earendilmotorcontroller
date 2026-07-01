@@ -12,6 +12,7 @@
 #include "fault_manager.h"
 #include "motor_driver.h"
 #include "bldc_commutation.h"
+#include "storage.h"
 #include "stm32f4xx_hal.h"
 
 void AppStatus_PrintStatus(void)
@@ -99,8 +100,9 @@ void AppStatus_PrintStatus(void)
         uint8_t tmpmap[8];
         Commutation_GetMap(tmpmap);
         bool map_valid = Commutation_ValidateHallMap(tmpmap);
-        UartProtocol_Printf("\r\nHallMap: source=%s valid=%u dirty=%u storage_load=ENABLED storage_save=DISABLED",
-            src_name, (unsigned)map_valid, (unsigned)s->hall_map_dirty);
+        UartProtocol_Printf("\r\nHallMap: source=%s valid=%u dirty=%u cfg=%s",
+            src_name, (unsigned)map_valid, (unsigned)s->hall_map_dirty,
+            Storage_HasValidConfig() ? "SAVED" : "DEFAULT");
         if (s->identify_was_run) {
             const char *ires = "NONE";
             switch (s->identify_last_result) {
@@ -145,6 +147,11 @@ void AppStatus_PrintHelp(void)
         "\r\n disarm gatetest"
         "\r\n disarm service"
         "\r\n dbg on/off | telper <ms>"
+        "\r\n savecfg / save / saveall"
+        "\r\n loadcfg"
+        "\r\n erasecfg"
+        "\r\n cfg              (show current config)"
+        "\r\n defaults         (load defaults to RAM)"
         "\r\n"
         "\r\n Hall map commands:"
         "\r\n  map                  show active map"
@@ -156,7 +163,7 @@ void AppStatus_PrintHelp(void)
         "\r\n  map discard          discard candidate"
         "\r\n  map default          load default map"
         "\r\n  map load             load from flash"
-        "\r\n  map save             save to flash (disabled)"
+        "\r\n  map save             save to flash"
         "\r\n"
         "\r\n help / ?"
         "\r\n============================");

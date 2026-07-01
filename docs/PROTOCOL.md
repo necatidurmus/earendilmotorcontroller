@@ -79,9 +79,12 @@ H7 wheelbridge.
 | `map discard` | discard candidate |
 | `map default` | load default compile-time map |
 | `map load` / `reload` | load Hall map from flash |
-| `map save` / `save` / `savecfg` / `saveall` | **disabled** — `[ERR] Persistent storage disabled in this build` |
-| `loadcfg` | load duty-mode config (kick, ramp, default_pwm, brake_hold_ms) from flash. Motor must be stopped. |
-| `defaults` | reset duty-mode config to safe bring-up defaults in RAM (kick OFF, ramp ON, default_pwm=100). Motor must be stopped. |
+| `map save` | save active Hall map to flash. Motor must be stopped. |
+| `savecfg` / `save` / `saveall` | snapshot runtime config (PI, base, boost, ramp, kick, ramp, default_pwm, brake_hold_ms, telper) and save to flash. Motor must be stopped. |
+| `loadcfg` | load full config from flash (PI, base, boost, ramp, kick, ramp, default_pwm, brake_hold_ms, telper). Motor must be stopped. |
+| `erasecfg` | erase all config records from flash (preserves hall map). Motor must be stopped. |
+| `cfg` | display current RAM config summary and flash status |
+| `defaults` | reset ALL config (PI, base, boost, ramp, kick, ramp, default_pwm, brake_hold_ms, telper) to compile-time defaults in RAM. Does NOT auto-save to flash. Motor must be stopped. |
 | `mapreset` | legacy alias for `map default` |
 | `identify` | Hall-map identify routine (**requires service arming**) |
 | `scan` | monitor Hall signals for 10 s |
