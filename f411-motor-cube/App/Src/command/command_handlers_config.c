@@ -503,27 +503,18 @@ bool CommandHandlers_Config_Handle(char *cmd)
     if (strcmp(cmd, "cfg") == 0) {
         PersistentConfig_t cfg;
         ConfigSnapshot_FromRuntime(&cfg);
-        float kp, ki;
-        SpeedPI_GetGains(&kp, &ki);
-        uint16_t base[SPEED_PI_BAND_COUNT];
-        SpeedPI_GetBasePwm(base);
-        uint16_t boost[SPEED_PI_BAND_COUNT];
-        uint16_t bstms;
-        SpeedPI_GetBoostPwm(boost, &bstms);
-        float rup, rdown;
-        SpeedPI_GetRampRates(&rup, &rdown);
 
         UartProtocol_Printf("\r\nKp_m=%ld Ki_m=%ld",
-            (long)(kp * 1000.0f), (long)(ki * 1000.0f));
+            (long)(cfg.kp * 1000.0f), (long)(cfg.ki * 1000.0f));
         UartProtocol_Print("\r\nBase");
         for (uint8_t i = 0U; i < SPEED_PI_BAND_COUNT; i++)
-            UartProtocol_Printf(" %u", (unsigned)base[i]);
+            UartProtocol_Printf(" %u", (unsigned)cfg.base_pwm[i]);
         UartProtocol_Print("\r\nBoost");
         for (uint8_t i = 0U; i < SPEED_PI_BAND_COUNT; i++)
-            UartProtocol_Printf(" %u", (unsigned)boost[i]);
-        UartProtocol_Printf(" ms=%u", (unsigned)bstms);
+            UartProtocol_Printf(" %u", (unsigned)cfg.boost_pwm[i]);
+        UartProtocol_Printf(" ms=%u", (unsigned)cfg.boost_ms);
         UartProtocol_Printf("\r\nRamp up=%ld down=%ld",
-            (long)rup, (long)rdown);
+            (long)cfg.ramp_up, (long)cfg.ramp_down);
         UartProtocol_Printf("\r\nKick %s duty=%u ms=%u",
             cfg.kick_enabled ? "ON" : "OFF",
             (unsigned)cfg.kick_duty, (unsigned)cfg.kick_ms);

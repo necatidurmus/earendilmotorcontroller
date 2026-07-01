@@ -4,7 +4,7 @@
  *
  * SECTOR LAYOUT (last 128 KB sector at 0x08060000):
  *   Offset 0x0000: Hall map record (14 bytes, HMAP v1)
- *   Offset 0x0040: Config record area (64-byte aligned slots)
+ *   Offset 0x0100: Config record area (append-only CFG2 slots)
  *                   Append-only CFG2 records with sequence numbers.
  *                   On load, the latest valid record wins.
  *                   When the area is full, the sector is erased

@@ -252,7 +252,7 @@ static void record_to_config(const Cfg2Record_t *rec, PersistentConfig_t *cfg)
 static void config_to_record(const PersistentConfig_t *cfg,
                                uint32_t sequence, Cfg2Record_t *rec)
 {
-    memset(rec, 0, sizeof(Cfg2Record_t));
+    memset(rec, 0xFF, sizeof(Cfg2Record_t));
     rec->magic           = CFG2_MAGIC;
     rec->version         = CFG2_VERSION;
     rec->length          = (uint16_t)sizeof(Cfg2Record_t);
@@ -274,8 +274,7 @@ static void config_to_record(const PersistentConfig_t *cfg,
     rec->telemetry_interval_ms = cfg->telemetry_interval_ms;
     rec->kick_enabled    = cfg->kick_enabled ? 1U : 0U;
     rec->ramp_enabled    = cfg->ramp_enabled ? 1U : 0U;
-    rec->reserved8[0]    = 0U;
-    rec->reserved8[1]    = 0U;
+    /* reserved8[2] remains 0xFF from the initial memset — Flash erased state */
 
     rec->crc32 = fnv1a_32(rec, sizeof(Cfg2Record_t) - sizeof(uint32_t));
 }
@@ -464,6 +463,9 @@ bool Storage_SaveConfig(const PersistentConfig_t *cfg)
 bool Storage_EraseConfig(void)
 {
     if (!flash_size_ok()) return false;
+
+    /* Nothing to erase if no config records exist. */
+    if (!Storage_HasValidConfig()) return true;
 
     /* Read current hall map to preserve it. */
     uint8_t hall_map[8];
