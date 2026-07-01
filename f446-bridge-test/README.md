@@ -24,7 +24,7 @@ F411 motor controller (USART2)
 | Motor sayısı | 4 (FL/RL/FR/RR) | 1 (M1), genişletilebilir |
 | Framework | Arduino | Arduino |
 | Amaç | Üretim üst kontrolcü | Test/bridge |
-| Durum | Mevcut | Alternatif test altyapısı |
+| Durum | Referans (repo dışı aktif hedef değil) | Aktif test bridge |
 
 ## Varsayılan Pinler (Nucleo-F446RE)
 

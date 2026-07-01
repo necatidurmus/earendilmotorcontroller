@@ -233,8 +233,8 @@ Status legend: **OPEN** · **FIXED (code)** · **VERIFIED (hw)** · **WONTFIX**
 * Fix: added `MotorDriver_GetDuty()` (0..255). Telemetry `PWM_ACT` =
   `MotorDriver_GetDuty()`; `PWM_SET` = `App_GetTargetDuty()`. CCR
   ticks are still available via `MotorDriver_GetCurrentCcrTicks()`.
-* Acceptance: `PWM_SET` and `PWM_ACT` are meaningful 0..255 values
-  for terminal.py.
+* Acceptance: `PWM_SET` and `PWM_ACT` are meaningful 0..4000 values
+  for `f446_motor_gui.py`.
 
 ---
 
@@ -736,16 +736,15 @@ Status legend: **OPEN** · **FIXED (code)** · **VERIFIED (hw)** · **WONTFIX**
 
 * Severity: Medium
 * Status: **FIXED (code)**
-* Affected: `App/Src/app_main.c`, `tools/ftdi_h7_client.py`,
-  `tools/ftdi_h7_emulator.py`, `tools/ftdi_h7_gui.py`
+* Affected: `App/Src/app_main.c`, legacy Python tools (removed)
 * Description: The legacy Arduino firmware used `mode normal`
   (manual PWM) and `mode control` (WASD+RPM). The cube firmware
-  only accepted `mode duty` / `mode speed`, so old H7 / tools
+  only accepted `mode duty` / `mode speed`, so old tools
   scripts that sent `mode normal` / `mode control` got
   `[ERR] Unknown command`.
-* Evidence: `tools/ftdi_h7_client.py` `safe_stop()` sent
+* Evidence: Legacy `tools/ftdi_h7_client.py` `safe_stop()` sent
   `mode normal`; `tools/ftdi_h7_gui.py` mode buttons sent
-  `mode normal` / `mode control`.
+  `mode normal` / `mode control`. (Both removed.)
 * Fix: the cube parser now accepts `mode normal` as an alias for
   `mode duty` and `mode control` as an alias for `mode speed`.
   The tools scripts were updated to send the canonical

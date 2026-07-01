@@ -6,14 +6,12 @@ confirmation. None of these have been hardware-tested.
 
 ## No current sense / current limiting
 
-* There is **no current sense, no ADC current measurement, no
-  current limiting, no INA181 support, no over-current fault**. Out
-  of scope by design.
-* Protection in this revision is only: firmware CCxE/CCxNE exclusion,
-  immediate all-off on invalid raw Hall, Hall-based faults (NO_HALL,
-  INVALID_HALL, ILLEGAL_TRANSITION), command watchdog, host-disconnect
-  watchdog, the 6-step table, and a current-limited bench PSU. A
-  shoot-through or a stalled motor has no electronic current limit.
+* This hardware revision does not use current sense. There is **no
+  ADC current measurement, no INA181, and no over-current fault**.
+  This is by design.
+* Protection is provided through Hall timeout, fault state, watchdog,
+  and manual stop behaviors. Use a current-limited bench supply when
+  operating the motor.
 * `brake` / `x` performs active braking (all low-side MOSFETs ON).
   Without current sense there is no protection against the current
   spike caused by rapid deceleration. Use only with a current-limited

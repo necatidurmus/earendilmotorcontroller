@@ -95,19 +95,14 @@ Modular architecture, 9 sub-folders under `App/`. Build: `pio run -d f411-motor-
 
 | File | Role |
 |------|------|
-| `terminal.py` | H7 terminal GUI — telemetry table, command send |
-| `f446_motor_gui.py` | F446 direct motor GUI |
-| `f446_serial_smoke_test.py` | F446 serial smoke test |
-| `ftdi_h7_gui.py` | FTDI direct-control GUI |
-| `ftdi_h7_client.py` | FTDI H7 client library |
-| `ftdi_h7_emulator.py` | FTDI H7 CLI test |
+| `f446_motor_gui.py` | F446 bridge motor GUI (active) |
+| `f446_serial_smoke_test.py` | F446 bridge serial smoke test (active) |
+| `requirements.txt` | Python dependencies (pyserial) |
 
-## H7 upper controller (`h7-main/`) — read only
+## H7 upper controller (`h7-main/`) — inactive
 
-| File | Role |
-|------|------|
-| `src/main.cpp` | Wheelbridge telemetry relay, motor command dispatch |
-| `src/motor_dispatcher.cpp` | Sends `rpm`, `f`, `b`, `stop`, `identify` to F411 |
+Not an active target in this repo. Kept for protocol reference only.
+Do not modify.
 
 ## Docs
 
@@ -119,7 +114,7 @@ Modular architecture, 9 sub-folders under `App/`. Build: `pio run -d f411-motor-
 | `docs/PROTOCOL.md` | Full UART command/telemetry reference |
 | `docs/KNOWN_RISKS.md` | Unverified assumptions and risks |
 | `docs/HALL_IDENTIFY.md` | Hall identify algorithm |
-| `docs/REVIEW_REPORT.md` | One-shot code review (archived) |
+| `docs/F411_FLASH_CONFIG_PERSISTENCE.md` | Flash storage design and usage |
 | `docs/ai/` | Agent workflow, memory bank, task log |
 
 ## Archived (`ref/`) — do not modify

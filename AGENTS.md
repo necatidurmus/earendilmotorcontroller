@@ -10,7 +10,7 @@ Safety-critical power-electronics firmware — read before coding.
 | `f411-motor-cube/` | **Active firmware** — STM32Cube/PlatformIO, modular | Yes |
 | `f446-bridge-test/` | F446 single-motor UART bridge test | Yes |
 | `h7-main/` | H7 upper controller | **No** (unless protocol-compat read) |
-| `tools/` | Python GUI/terminal/smoke-test/FTDI | Yes |
+| `tools/` | Python GUI/smoke-test | Yes |
 | `docs/` | Safety, protocol, bring-up, TIM1 docs | Yes |
 | `docs/ai/` | Agent workflow, memory, goals, refactor plan | Yes |
 | `ref/` | Archived: legacy Arduino, monolithic firmware, audits | **No** |
@@ -53,8 +53,8 @@ CubeMX-style generated skeleton (init only). `main.c` only calls
 
 ## Protocol compatibility
 
-Commands, telemetry field names, and line format are shared with H7
-and `tools/terminal.py`. Do not silently change them.
+Commands, telemetry field names, and line format are shared between F411,
+F446 bridge, and `tools/f446_motor_gui.py`. Do not silently change them.
 
 * Commands: `mode duty/speed`, `rpm <signed>`, `f/b/f<n>/b<n>`, `stop`,
   `identify`, `clrerr`, `pi`, `base`, `boost`, `ramp`, `hall`, `status`,
@@ -69,7 +69,7 @@ and `tools/terminal.py`. Do not silently change them.
 
 ```bash
 pio run -d f411-motor-cube          # build firmware
-python -m py_compile tools/terminal.py  # check Python tools
+python -m py_compile tools/f446_motor_gui.py  # check Python tools
 ```
 
 If PlatformIO is unavailable, **report it** — do not guess a substitute.

@@ -5,9 +5,9 @@ Lines are terminated with `\n` or `\r\n`. Replies are line-based and
 prefixed with `\r\n`. Commands are case-insensitive. Unknown commands
 return `[ERR] Unknown command`.
 
-This protocol is what the **H7 upper controller** (`h7-main/src/motor_dispatcher.cpp`)
-speaks to the F411, and what **`tools/terminal.py`** expects via the
-H7 wheelbridge.
+This protocol is what the **F446 bridge** (`f446-bridge-test/src/main.cpp`)
+and the **F446 motor GUI** (`tools/f446_motor_gui.py`) speak to the F411.
+The H7 (`h7-main/`) uses the same protocol format but is not an active target in this repo.
 
 ## Command source
 
@@ -17,8 +17,8 @@ H7 wheelbridge.
   * `stopAll()`: `rpm 0` then `stop`
   * `identifyAll()`: `identify`
   * arbitrary text: `sendTextCommand` / `sendToAll`
-* **From direct FTDI / `tools/terminal.py`**: any command below, sent
-  straight to the F411 UART (or relayed by the H7).
+* **From F446 bridge / GUI** (`tools/f446_motor_gui.py`): any command below,
+  sent via the F446 bridge `m1` prefix or direct FTDI.
 
 ## Commands
 
@@ -153,11 +153,11 @@ RPM:<measured>,T:<target>,D:<duty>,DIR:<F|R|N>,APP_PH:<phase>,SP:<0|1>,BRAKE:<0|
 RPM:<m>,RF:<f>,Tcmd:<c>,Trmp:<r>,ERR:<e>,D:<d>,SPD_PH:<p>,FC:<c>,PWM_SET:<s>,PWM_ACT:<a>
 ```
 
-## H7 wheelbridge compatibility
+## H7 wheelbridge compatibility (reference)
 
-The H7 (`h7-main/src/main.cpp`, `updateWheelTelemetryBridge`) reads
-each F411 motor UART line, strips `\r`, splits on `\n`, and prefixes
-the line with the motor name before forwarding to the PC:
+The H7 (`h7-main/`, not an active target in this repo) reads each F411
+motor UART line, strips `\r`, splits on `\n`, and prefixes the line
+with the motor name before forwarding to the PC:
 
 ```
 FL|RPM:12,T:10,D:34,DIR:F,APP_PH:1,SP:1,BRAKE:0,FC:0,H:5,PWM_SET:34,PWM_ACT:34,QDROP:0
@@ -166,11 +166,10 @@ RL|...
 RR|...
 ```
 
-`tools/terminal.py` (`_parse_telemetry`) splits on `|`, takes the
-prefix (`FL`/`FR`/`RL`/`RR`), then parses the payload as
-comma-separated `KEY:VALUE` pairs. Recognised keys: `RPM`, `T`,
-`D`, `DIR`, `APP_PH`, `SP`, `BRAKE`, `FC`, `H`, `PWM_SET`, `PWM_ACT`,
-`QDROP` (debug also: `RF`, `TCMD` (mapped to target), `TRMP`, `ERR`,
+The F446 bridge (`f446-bridge-test/`) and `tools/f446_motor_gui.py` use
+the same `KEY:VALUE` telemetry format. The GUI parses comma-separated
+fields: `RPM`, `T`, `D`, `DIR`, `APP_PH`, `SP`, `BRAKE`, `FC`, `H`,
+`PWM_SET`, `PWM_ACT`, `QDROP` (debug also: `RF`, `TCMD`, `TRMP`, `ERR`,
 `SPD_PH`).
 
 ## Speed mode heartbeat requirement (ISSUE-020)
@@ -187,8 +186,8 @@ Both duty and speed modes require real command heartbeat:
 * `FAULT_WATCHDOG` and `FAULT_HOST_LOST` are **not latched**; the next
   valid motion command clears them and resumes motion.
 
-The H7 `motor_dispatcher` sends `rpm <signed>` periodically when a
-speed target is active, which keeps the F411 alive. `tools/terminal.py`
+The F446 bridge sends `rpm <signed>` periodically when a speed
+target is active, which keeps the F411 alive. `tools/f446_motor_gui.py`
 also sends periodic commands when a speed slider is active.
 
 ## Fault handling (ISSUE-021)

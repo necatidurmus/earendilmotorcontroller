@@ -11,9 +11,8 @@ Project state snapshot for agents. Read this at the start of any task.
   test platform (Arduino/PlatformIO). Active for testing.
 * **H7** (`h7-main/`) is out of scope for changes. Read only for
   protocol compatibility understanding.
-* **Python tools** (`tools/`): `terminal.py` (H7 terminal GUI),
-  `f446_motor_gui.py` (F446 direct GUI), `f446_serial_smoke_test.py`,
-  `ftdi_h7_*.py` (FTDI direct-control scripts).
+* **Python tools** (`tools/`): `f446_motor_gui.py` (F446 bridge GUI, active), `f446_serial_smoke_test.py` (smoke test, active).
+  Legacy tools (`terminal.py`, `ftdi_h7_*.py`) have been removed.
 * **Archived** (`ref/`): legacy Arduino firmware (`ref/f411-motor/`),
   monolithic firmware before modularization
   (`ref/f411-motor-cube-monolithic/`), one-shot audit reports.
@@ -24,9 +23,9 @@ Project state snapshot for agents. Read this at the start of any task.
 |----------|--------|
 | Brake = coast (all gates off) | Active — no current sense |
 | Current sense / ADC / INA181 | **None** — by design, this revision |
-| UART protocol format | Frozen — H7/terminal.py depend on it |
+| UART protocol format | Frozen — F446 bridge/GUI depend on it |
 | Telemetry compact format | Frozen — field names and order fixed |
-| `save`/`savecfg`/`saveall` | **Disabled** — flash storage unsafe |
+| `save`/`savecfg`/`saveall` | **Enabled** — flash persistence with append-only records |
 | HSE = 25 MHz (WeAct BlackPill) | Active — PLLM=25, SYSCLK=96 MHz |
 | TIM1 PWM = 20 kHz | Confirmed (ARR=4799, edge-aligned) |
 | Hall via EXTI + TIM2 | Confirmed — single-writer architecture |
@@ -80,17 +79,15 @@ touching:
 
 ### Medium-term
 
-* Path toward current sense (INA181 or similar) for battery operation.
-* Active braking once current sensing is available.
-* F446 bridge integration testing with H7 upper controller.
+* Active braking validation (current-limited bench supply).
+* F446 bridge integration testing with hardware.
 
 ### Long-term
 
 * F411 motor controller is modular, testable, protocol-compatible
-  with F446 and H7, and safe for hardware bring-up.
+  with F446 bridge, and safe for hardware bring-up.
 * Reliable Hall-based commutation with validated gate-drive.
-* Path toward current sense and active braking (future hardware
-  revision).
+* Path toward current sense and active braking (future hardware revision).
 
 ## Documentation notes
 

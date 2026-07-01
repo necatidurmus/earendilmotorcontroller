@@ -124,16 +124,13 @@ gate fails, stop and file an issue before continuing.
 * Gate: stable regulation at 10/15/23 RPM, no runaway, no false
   `FAULT_NO_HALL`.
 
-## Stage 7 — H7 bridge
+## Stage 7 — F446 bridge
 
-* Connect the F411 command UART to the H7 motor UART.
-* On the H7: `wheelbridge on`.
-* From the H7 / terminal.py: command a forward RPM, e.g. `rpm 10`.
-* Verify the PC sees `FL|RPM:12,T:10,D:34,DIR:F,APP_PH:1,SP:1,BRAKE:0,FC:0,H:5,PWM_SET:34,PWM_ACT:34`
-  style lines.
-* Verify `tools/terminal.py` populates the telemetry table for the
-  correct motor prefix.
-* Gate: prefixed telemetry parses in terminal.py.
+* Connect the F411 command UART to the F446 bridge motor UART.
+* On the PC: `python3 tools/f446_motor_gui.py --port /dev/ttyACM0`
+* From the GUI or serial: command a forward RPM, e.g. `m1 rpm 10`.
+* Verify the GUI populates telemetry for the motor.
+* Gate: GUI telemetry table populates correctly.
 
 ## Stage 8 — Loaded test
 
@@ -168,5 +165,5 @@ Testing must stop immediately and the motor be disconnected if:
 * `clrerr` can still be used to manually clear the fault and force
   STOPPED.
 * Speed mode requires periodic `rpm <signed>` heartbeat from
-  H7/terminal (ISSUE-020). If commands stop for 800 ms, motor stops.
+  the bridge/GUI (ISSUE-020). If commands stop for 800 ms, motor stops.
 * `mode speed` alone does not run the motor.

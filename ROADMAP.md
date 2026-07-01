@@ -116,20 +116,20 @@ Exit criteria:
 
 Status: **code complete, NOT hardware-verified.**
 
-## Phase 6 — H7 and terminal integration
+## Phase 6 — F446 bridge and GUI integration
 
 Deliverables:
 
-* H7 command compatibility preserved (`rpm`, `f`, `b`, `stop`, `identify`)
-* telemetry format works with the H7 wheelbridge prefix
-* `tools/terminal.py` can show actual measured RPM
+* F446 bridge command compatibility preserved (`rpm`, `f`, `b`, `stop`, `identify`)
+* telemetry format works with the F446 bridge `m1` prefix
+* `tools/f446_motor_gui.py` can show actual measured RPM
 
 Exit criteria:
 
-* `FL|RPM:...,T:...` style telemetry is parseable by terminal.py
+* GUI telemetry table populates correctly via F446 bridge
 
 Status: **code complete, NOT hardware-verified.** No protocol fields
-changed; `PWM_ACT` is now a real 0..250 duty (was truncated CCR ticks).
+changed; `PWM_ACT` is now a real 0..4000 duty (was truncated CCR ticks).
 
 ## Phase 7 — Hardware bring-up
 
