@@ -71,6 +71,23 @@ bool CommandHandlers_Query_Handle(char *cmd)
             UartProtocol_Printf(" ms=%u", (unsigned)ms);
             UartProtocol_Printf("\r\nRamp up=%ld down=%ld",
                 (long)up, (long)down);
+            /* PI diagnostic: Err, Base (current band), P, I, Out */
+            {
+                float ramped = SpeedPI_GetRampedTargetRpm();
+                float frpm_d = HallSensor_GetFilteredRpm();
+                float err = ramped - frpm_d;
+                float integ = SpeedPI_GetIntegral();
+                float p_t = kp * err;
+                float i_t = ki * integ;
+                float abs_r = ramped < 0.0f ? -ramped : ramped;
+                uint32_t sc = (uint32_t)(abs_r * (float)SPEED_PI_BAND_COUNT);
+                uint32_t bn = sc / (uint32_t)MAX_RPM_TARGET;
+                if (bn >= SPEED_PI_BAND_COUNT) bn = SPEED_PI_BAND_COUNT - 1U;
+                UartProtocol_Printf("\r\nPI Err_m=%ld Base=%u P_m=%ld I_m=%ld Out=%u",
+                    (long)(err * 1000.0f), (unsigned)base[bn],
+                    (long)(p_t * 1000.0f), (long)(i_t * 1000.0f),
+                    (unsigned)SpeedPI_GetComputedDuty());
+            }
         }
         UartProtocol_PrintNewline();
         return true;

@@ -305,8 +305,9 @@ SpeedPhase SpeedPI_GetPhase(void)        { return s_spi.phase; }
 SpeedFault SpeedPI_GetFault(void)        { return s_spi.fault; }
 
 float SpeedPI_GetK(void)                 { return s_spi.kp; }
-void  SpeedPI_SetKp(float kp)            { s_spi.kp = clampf(kp, 0.0f, SPEED_PI_KP_MAX); }
-void  SpeedPI_SetKi(float ki)            { s_spi.ki = clampf(ki, 0.0f, SPEED_PI_KI_MAX); }
+float SpeedPI_GetIntegral(void)          { return s_spi.integral; }
+void  SpeedPI_SetKp(float kp)            { s_spi.kp = clampf(kp, SPEED_PI_KP_MIN, SPEED_PI_KP_MAX); }
+void  SpeedPI_SetKi(float ki)            { s_spi.ki = clampf(ki, SPEED_PI_KI_MIN, SPEED_PI_KI_MAX); }
 void SpeedPI_SetBasePwm(const uint16_t bands[SPEED_PI_BAND_COUNT])
 {
     /* ISSUE-040: clamp each band to 0..SPEED_PI_MAX_PWM so a stray

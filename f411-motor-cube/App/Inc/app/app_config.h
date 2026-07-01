@@ -85,11 +85,19 @@ extern "C" {
  * scaled by 16x so the same percentage duty is preserved.  Base and
  * boost use eight equal target-RPM bands across 0..MAX_RPM_TARGET;
  * boost duration is one shared value for all bands.
+ *
+ * PI gain limits (Kp 0..300, Ki 0..200) are sized for the 4000 PWM
+ * scale.  With Kp=10 (old max), 2 RPM error produced only 20 PWM
+ * (0.5% duty) — insufficient for low-RPM torque.  Higher gains
+ * (Kp=50..200) give meaningful PI contribution.  Start conservative
+ * and increase with current-limited PSU.
  * ---------------------------------------------------------------- */
 #define DEFAULT_SPEED_KP                 0.8f
 #define DEFAULT_SPEED_KI                 0.05f
-#define SPEED_PI_KP_MAX                  10.0f
-#define SPEED_PI_KI_MAX                  10.0f
+#define SPEED_PI_KP_MIN                  0.0f
+#define SPEED_PI_KP_MAX                  300.0f
+#define SPEED_PI_KI_MIN                  0.0f
+#define SPEED_PI_KI_MAX                  200.0f
 #define DEFAULT_BASE_PWM_1               640U
 #define DEFAULT_BASE_PWM_2               660U
 #define DEFAULT_BASE_PWM_3               680U

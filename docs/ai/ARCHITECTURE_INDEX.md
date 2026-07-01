@@ -99,10 +99,13 @@ Modular architecture, 9 sub-folders under `App/`. Build: `pio run -d f411-motor-
 | `f446_serial_smoke_test.py` | F446 bridge serial smoke test (active) |
 | `requirements.txt` | Python dependencies (pyserial) |
 
-## H7 upper controller (`h7-main/`) — inactive
+## H7 upper controller — not part of the active repository flow
 
-Not an active target in this repo. Kept for protocol reference only.
-Do not modify.
+The `h7-main/` folder has been removed from the repo. The active
+flow is PC GUI → F446 bridge → F411 motor controller only. H7
+references in `docs/PROTOCOL.md` and `docs/KNOWN_RISKS.md` are kept
+purely as historical / protocol-format context; do not regenerate or
+restore H7 build artifacts.
 
 ## Docs
 

@@ -105,7 +105,7 @@ void App_Init(void)
     /* Load saved config from flash (if any). */
     {
         PersistentConfig_t cfg;
-        if (Storage_LoadConfig(&cfg)) {
+        if (Storage_LoadConfig(&cfg) && ConfigSnapshot_Validate(&cfg)) {
             ConfigSnapshot_ApplyToRuntime(&cfg);
             UartProtocol_Printf("\r\n[OK] Config loaded from Flash seq=%lu",
                 (unsigned long)Storage_GetConfigSequence());

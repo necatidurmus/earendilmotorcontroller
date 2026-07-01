@@ -4,6 +4,115 @@ Agent task history. Newest entries on top.
 
 ---
 
+## 2026-07-01 — Final repo cleanup: H7 removal, config validation, docs
+
+- **Purpose:** Apply the final-cleanup checklist: drop the inactive
+  H7 target folder, clean Python / settings-local leftovers, align
+  the F446 README with the actual service-lock policy, harden the
+  loadcfg / savecfg / map-load / reload paths with
+  `ConfigSnapshot_Validate` and `MotionControl_ServiceBusy`,
+  fix the storage.h offset comment, and refresh README/PROTOCOL
+  docs around the F411 ↔ F446 ↔ GUI active flow.
+- **Read:** `f446-bridge-test/src/main.cpp`, `f446-bridge-test/README.md`,
+  `f411-motor-cube/App/Src/app/app_main.c`,
+  `f411-motor-cube/App/Src/command/command_handlers_config.c`,
+  `f411-motor-cube/App/Src/storage/storage.c`,
+  `f411-motor-cube/App/Inc/storage/storage.h`,
+  `f411-motor-cube/App/Inc/motion/motion_safety.{c,h}`,
+  `f411-motor-cube/App/Src/storage/config_snapshot.c`,
+  `README.md`, `AGENTS.md`, `docs/ai/MEMORY_BANK.md`,
+  `docs/ai/ARCHITECTURE_INDEX.md`, `docs/PROTOCOL.md`,
+  `.gitignore`, `tools/f446_motor_gui.py`.
+- **Changed:**
+  - **Deleted:** `h7-main/` (entire folder); `tools/__pycache__/`;
+    `ref/f411-motor-cube-monolithic/tools/__pycache__/`;
+    `.claude/settings.local.json`.
+  - `README.md` — Dropped `h7-main/` from the tree; rewrote the
+    "Inactive / Removed Targets" section to reflect the removal;
+    rewrote the Storage and GUI Behavior sections in the requested
+    form; corrected the Stop vs Emergency Stop table to match the
+    non-latching policy (ISSUE-046).
+  - `AGENTS.md` — Removed `h7-main/` row; added explicit note that
+    H7 is not part of the active flow.
+  - `docs/ai/MEMORY_BANK.md` — H7 entry now says "H7 target is
+    not part of the active repository flow. The `h7-main/` folder
+    has been removed".
+  - `docs/ai/ARCHITECTURE_INDEX.md` — H7 section rewritten.
+  - `docs/PROTOCOL.md` — `h7-main/` references reworded as
+    legacy / format-compat context; `loadcfg` description now
+    mentions `ConfigSnapshot_Validate` requirement.
+  - `.gitignore` — Added `.claude/settings.local.json` to
+    per-user ignore list.
+  - `f446-bridge-test/src/main.cpp` — Removed `telper ` from
+    `isDangerousServiceCmd` prefix list (telper is a free
+    diagnostic); updated `printHelp()` to list current passthrough
+    and service-lock commands.
+  - `f446-bridge-test/README.md` — Rewrote passthrough and
+    service-lock command tables; telper is in passthrough;
+    `m1 pi/kp/ki/base/boost/ramp/kickduty/kickms/ramprate/rampms/defpwm/brake`
+    and `m1 savecfg/save/saveall/loadcfg/erasecfg/defaults` are
+    explicitly service-lock.
+  - `f411-motor-cube/App/Src/app/app_main.c` — Boot config load
+    now `Storage_LoadConfig && ConfigSnapshot_Validate`. If
+    either fails, defaults stay in effect; boot message says
+    "no valid config in Flash — defaults active".
+  - `f411-motor-cube/App/Src/command/command_handlers_config.c`:
+    - `loadcfg` — runtime is unchanged on `!Storage_LoadConfig`
+      or `!ConfigSnapshot_Validate` (new error message:
+      "Saved config failed validation — runtime unchanged").
+    - `savecfg` / `save` / `saveall` — post-write verify now
+      re-reads via `Storage_LoadConfig` and runs
+      `ConfigSnapshot_Validate`; on failure prints
+      "Saved but verify-read failed validation".
+    - `map load` / `map reload` / `reload` — replaced the
+      `phase == RUNNING/NEUTRAL` + fault-latch guard with the
+      standard `phase != PHASE_STOPPED || MotionControl_ServiceBusy()`
+      guard, matching savecfg / map save semantics. Error
+      message: "Stop motor and exit service mode before
+      map/config operation".
+  - `f411-motor-cube/App/Inc/storage/storage.h` — Fixed stale
+    comment: "fresh record is written at offset 0x0040" →
+    "0x0100" (matches `CFG_AREA_OFFSET` in storage.c).
+  - PI out-of-range error messages: already using `0..%ld.%ld`
+    format producing `0..300.0` for Kp and `0..200.0` for Ki
+    (Kp/Ki limits were raised to 0..300 / 0..200 on the 4000 PWM
+    scale; see prior TASK_LOG entry). No additional change needed.
+- **Why:** Final-cleanup checklist from the user: drop inactive
+  H7, harden config load/save, align docs and F446 README.
+- **Build/test:**
+  - `pio run -d f411-motor-cube` SUCCESS (RAM 2.2%, Flash 10.5%).
+  - `pio run -d f446-bridge-test` SUCCESS (RAM 1.7%, Flash 4.3%).
+  - `python3 -m py_compile tools/f446_motor_gui.py tools/f446_serial_smoke_test.py` PASS.
+  - Legacy grep: only intentional "H7 removed" / "ftdi_h7_gui
+    removed" / "current sense absent by design" notes remain in
+    active files; no live code references.
+- **Remaining risks:** No on-hardware validation of the new
+  loadcfg / savecfg-verify messages. Kp/Ki limits 0..300 / 0..200
+  (raised in prior commit for 4000 PWM scale) mean user-supplied
+  test values like `pi 50 50` and `kp 100` are now accepted; the
+  original "Test C" expectation in the cleanup checklist
+  predates that limit raise. See test matrix for the corrected
+  expected behavior.
+
+---
+
+## 2026-07-01 — Raise SpeedPI Kp/Ki limits for 4000 PWM scale
+
+- **Purpose:** PI gain limits were capped at 10.0 (from old 250-scale era). On 4000 PWM scale, Kp=10 produces only 0.5% duty per RPM error — insufficient for low-RPM torque. Raise to Kp 0..300, Ki 0..200. Add PI diagnostics to spstat.
+- **Read:** app_config.h, speed_pi.c/h, config_snapshot.c, command_handlers_config.c, command_handlers_query.c, app_status.c, PROTOCOL.md
+- **Changed:**
+  - `app_config.h` — Added SPEED_PI_KP_MIN/KI_MIN macros; raised SPEED_PI_KP_MAX 10→300, SPEED_PI_KI_MAX 10→200
+  - `speed_pi.h/c` — Added `SpeedPI_GetIntegral()` getter; SetKp/SetKi now use centralized MIN macros
+  - `command_handlers_config.c` — Error messages now show actual limit (0..300.0 / 0..200.0) instead of milli-scaled
+  - `command_handlers_query.c` — Added PI diagnostic line to spstat: Err_m, Base (current band), P_m, I_m, Out
+  - `config_snapshot.c` — Validate uses SPEED_PI_KP_MIN/KI_MIN macros
+  - `PROTOCOL.md` — Updated pi command description to show new limits
+- **Why:** With Kp=10 on 4000 PWM scale, 2 RPM error produced only 20 PWM (0.5%). Users need Kp=50-200 range for meaningful PI tuning at low RPM.
+- **Build/test:** pio run SUCCESS (RAM 2.2%, Flash 10.5%)
+- **Remaining risks:** No hardware verification of high-gain behavior. Users should test incrementally (start with Kp=50, Ki=10) and monitor with current-limited PSU. Very high gains (Kp>150) may cause oscillation depending on motor/load.
+
+---
+
 ## 2026-07-01 — Post-hardware-verification cleanup and doc sync
 
 - **Purpose:** Sync docs with hardware test results, fix stale code, document RXB telemetry field

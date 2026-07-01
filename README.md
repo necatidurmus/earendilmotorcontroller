@@ -24,7 +24,6 @@ bldc-project-stm/
 │   ├── Core/            # CubeMX-style generated skeleton
 │   └── App/             # Modular motor-control application (8 modules)
 ├── f446-bridge-test/    # ACTIVE: F446 UART bridge firmware (single-motor test)
-├── h7-main/             # INACTIVE: H7 upper controller (kept for reference only)
 ├── tools/               # Python tools (GUI, smoke tests)
 │   ├── f446_motor_gui.py        # ACTIVE: F446 bridge GUI
 │   ├── f446_serial_smoke_test.py # ACTIVE: F446 bridge serial smoke test
@@ -102,7 +101,9 @@ estop                      -> emergency all-off
 
 ## Inactive / Removed Targets
 
-* **H7** (`h7-main/`) — Not an active target in this repo. Kept for reference only; do not modify.
+* **H7 target** — Not part of the active repository flow. The
+  `h7-main/` folder has been removed; F411 ↔ F446 ↔ PC GUI is the
+  only active path.
 * **`ftdi_h7_gui.py`** — Removed. Was FTDI direct-control GUI for H7 workflow.
 * **`ftdi_h7_emulator.py`** / **`ftdi_h7_client.py`** — Removed. CLI test tools for H7 workflow.
 * **`terminal.py`** — Removed. Legacy H7 terminal GUI; replaced by `f446_motor_gui.py`.
@@ -137,30 +138,58 @@ requested and safety-reviewed.
 * **Service/gate test** blocks motion commands until complete
 * **No hardware break** — do not enable TIM1 break without a physical BKIN pin wired
 * Verify all gate inputs with oscilloscope before connecting motor
-* **Storage** — `savecfg`/`save`/`saveall` save runtime config to flash; `loadcfg` loads from flash.
-  `saveall` is an alias for `savecfg` and does NOT save the Hall map (use `map save` separately).
-  `defaults` resets runtime config but does NOT auto-save; use `savecfg` to persist after reset.
-  `reload` reloads Hall map from flash only (not config); `loadcfg` loads motor config.
-  Invalid data falls back to safe defaults.
-
-### Stop vs Emergency Stop
-
-| Command | Behavior | Fault latch | Restart |
-|---------|----------|-------------|---------|
-| `stop` / `s` | Normal safe stop, immediate all-off | No | `f`/`b`/`rpm` |
-| `brake` / `x` | Active brake (all low-side ON); coast in bring-up | No | `f`/`b`/`rpm` |
-| `estop` | Emergency stop with fault | **Yes** | `clrerr` first |
-| `safe` / `alloff` | Coast stop (no fault) | No | `f`/`b`/`rpm` |
-
-* `stop` cancels any active service task or gate test immediately.
-* Gate test / service task during `stop` or `brake` → outputs go off immediately.
+* **Storage** — Runtime tuning commands (PI, base/boost, ramp, kick,
+  default_pwm, brake_hold_ms, telper) only update RAM. The flash
+  persistence policy is:
+  * `savecfg` / `save` / `saveall` — persist current runtime config
+    (PI, base, boost, ramp, kick, default_pwm, brake_hold_ms, telper)
+    to Flash. `save` and `saveall` are aliases for `savecfg`.
+  * `loadcfg` — load saved Flash config into runtime **only if** the
+    saved record passes CRC, magic, version, **and**
+    `ConfigSnapshot_Validate` range checks. On failure, runtime is
+    unchanged.
+  * `defaults` — reset runtime config to compile-time defaults in
+    RAM. Does NOT auto-persist; use `savecfg` after reset to keep.
+  * `erasecfg` — remove saved Flash config records (Hall map is
+    preserved). After reset, defaults are used unless a new config
+    is saved with `savecfg`.
+  * `cfg` — print runtime config summary and Flash status
+    (VALID / EMPTY).
+  * `reload` / `map load` — Hall map only, NOT config. (See Hall
+    Map Rules below for the Hall map / config split.)
 
 ### Hall Map Rules
 
+* `map save` / `map load` / `mapreset` / `map default` / `reload`
+  manage the Hall map. Hall map is **separate** from motor config;
+  `savecfg`/`save`/`saveall` do **NOT** save the Hall map (use
+  `map save` separately).
 * Raw 0 (0b000) and raw 7 (0b111) are **always invalid** — must map to 255.
 * `identify` rejects unstable Hall readings (hallA ≠ hallB).
 * `identify` rejects raw 0 or 7 readings.
 * Flash-loaded maps are validated with the same rules.
+
+### GUI Behavior
+
+* GUI **Apply** updates runtime/RAM only. It does NOT call `savecfg`.
+* GUI **Save Config** sends `m1 savecfg` (or `m2`/`m3`/`m4` for
+  future multi-motor builds).
+* GUI **Load Config** sends `m1 loadcfg`.
+* Apply must NEVER auto-send `savecfg`; the user must press Save
+  Config explicitly to persist.
+
+### Stop vs Emergency Stop
+
+| Command | Behavior | Latched? | Restart |
+|---------|----------|----------|---------|
+| `stop` / `s` | Normal safe stop, immediate all-off | No | `f`/`b`/`rpm` |
+| `brake` / `x` | Active brake (all low-side ON); current-limited PSU only | No | `f`/`b`/`rpm` |
+| `estop` | Emergency stop; motor off immediately | No (per ISSUE-046) | `f`/`b`/`rpm` (clears `FC`) |
+| `safe` / `alloff` | Coast stop (no fault) | No | `f`/`b`/`rpm` |
+
+* `stop` cancels any active service task or gate test immediately.
+* Gate test / service task during `stop` or `brake` → outputs go off immediately.
+* A new motion command clears the displayed fault and the safety lock; `clrerr` can also be used to force STOPPED.
 
 ### Telemetry Fields
 

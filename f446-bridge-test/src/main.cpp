@@ -130,7 +130,7 @@ static bool isDangerousServiceCmd(const char* cmd) {
         "gatetest ", "base ", "boost ", "pi ",
         "kp ", "ki ", "kickduty ", "kickms ",
         "ramp ", "ramprate ", "rampms ", "defpwm ",
-        "brake ", "telper ",
+        "brake ",
         "map set ",
         NULL
     };
@@ -187,11 +187,17 @@ static void printHelp() {
     Serial.println("  stop                 -> normal stop: rpm 0 + stop (no fault)");
     Serial.println("  safe / alloff        -> coast stop (motor coasts, no fault latch)");
     Serial.println("  estop                -> emergency all-off; next motion command may clear fault");
-    Serial.println("Direct F411 passthrough examples:");
-    Serial.println("  f50, b50, rpm 30, rpm -30, mode duty, mode speed, hall, status");
-    Serial.println("  x/brake (ACTIVE BRAKE; current-limited PSU), kick on/off, ramp on/off");
-    Serial.println("Service commands (requires bridge unlock_service + F411 arming):");
-    Serial.println("  m1 identify, m1 scan, m1 test, m1 gatetest, m1 save, m1 loadcfg");
+    Serial.println("Direct F411 passthrough (no service lock):");
+    Serial.println("  f<n>, b<n>, stop, s, x/brake, rpm <s>, pwm <n>, mode duty/speed,");
+    Serial.println("  hall, status, spstat, help, clrerr, debug on/off, dbg on/off,");
+    Serial.println("  telper <ms>, kick on/off, ramp on/off, map, map validate,");
+    Serial.println("  map candidate, map default, mapreset, reload, pid on/off");
+    Serial.println("Service commands (require bridge unlock_service CURRENT_LIMITED_BENCH_SUPPLY):");
+    Serial.println("  m1 pi/kp/ki, m1 base/boost, m1 ramp <up> <down>,");
+    Serial.println("  m1 kickduty, m1 kickms, m1 ramprate, m1 rampms, m1 defpwm,");
+    Serial.println("  m1 brake, m1 savecfg/save/saveall, m1 loadcfg, m1 erasecfg,");
+    Serial.println("  m1 defaults, m1 map set/apply/discard/reset/save/load/edit,");
+    Serial.println("  m1 identify, m1 scan, m1 test, m1 gatetest");
 }
 
 static void handlePcLine(char* line) {

@@ -11,8 +11,10 @@ Project state snapshot for agents. Read this at the start of any task.
   Build: `pio run -d f411-motor-cube`
 * **F446 bridge** (`f446-bridge-test/`) is a single-motor UART bridge
   test platform (Arduino/PlatformIO). Active for testing.
-* **H7** (`h7-main/`) is out of scope for changes. Read only for
-  protocol compatibility understanding.
+* **H7 target is not part of the active repository flow.** The
+  `h7-main/` folder has been removed from the repo. Active targets
+  are F411 motor controller, F446 bridge, and
+  `tools/f446_motor_gui.py`.
 * **Python tools** (`tools/`): `f446_motor_gui.py` (F446 bridge GUI, active), `f446_serial_smoke_test.py` (smoke test, active).
   Legacy tools (`terminal.py`, `ftdi_h7_*.py`) have been removed.
 * **Archived** (`ref/`): legacy Arduino firmware (`ref/f411-motor/`),
@@ -25,6 +27,9 @@ Project state snapshot for agents. Read this at the start of any task.
 |----------|--------|
 | Brake = coast (all gates off) | Active — no current sense |
 | Current sense / ADC / INA181 | **None** — by design, this revision |
+| PI gain limits: Kp 0..300, Ki 0..200 | Raised 2026-07-01 for 4000 PWM scale |
+| PI default gains: Kp=0.8, Ki=0.05 | Conservative defaults; tune via `pi` command |
+| `spstat` shows PI diagnostics | Err_m, Base (band), P_m, I_m, Out added 2026-07-01 |
 | UART protocol format | Frozen — F446 bridge/GUI depend on it |
 | Telemetry compact format | Frozen — field names and order fixed |
 | `save`/`savecfg`/`saveall` | **Enabled** — flash persistence with append-only records |
@@ -83,7 +88,9 @@ touching:
 
 ### Short-term (current)
 
-* Higher-RPM testing and PI tuning.
+* Higher-RPM testing and PI tuning. New limits: Kp 0..300, Ki 0..200.
+  Start with Kp=50, Ki=10 and increase gradually. Monitor with
+  current-limited PSU. Use `spstat` to verify P/I contribution.
 * Hall map `identify` on actual motor (if needed).
 * F446 bridge integration testing with hardware.
 

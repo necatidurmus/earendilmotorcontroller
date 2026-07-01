@@ -47,6 +47,7 @@ SpeedPhase SpeedPI_GetPhase(void);
 SpeedFault SpeedPI_GetFault(void);
 
 float SpeedPI_GetK(void);
+float SpeedPI_GetIntegral(void);
 void SpeedPI_SetKp(float kp);
 void SpeedPI_SetKi(float ki);
 void SpeedPI_SetBasePwm(const uint16_t bands[SPEED_PI_BAND_COUNT]);

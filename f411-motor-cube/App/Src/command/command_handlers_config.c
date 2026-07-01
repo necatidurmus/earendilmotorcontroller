@@ -65,12 +65,14 @@ bool CommandHandlers_Config_Handle(char *cmd)
         if (!isfinite(ki)) { UartProtocol_Print("\r\n[ERR] nan/inf rejected"); return true; }
         while (*end2 == ' ') end2++;
         if (*end2 != '\0') { UartProtocol_Print("\r\n[ERR] Trailing garbage"); return true; }
-        if (kp < 0.0f || kp > SPEED_PI_KP_MAX) {
-            UartProtocol_Printf("\r\n[ERR] Kp out of range (0..%ld)", (long)(SPEED_PI_KP_MAX * 1000.0f));
+        if (kp < SPEED_PI_KP_MIN || kp > SPEED_PI_KP_MAX) {
+            UartProtocol_Printf("\r\n[ERR] Kp out of range (0..%ld.%ld)",
+                (long)SPEED_PI_KP_MAX, (long)((SPEED_PI_KP_MAX - (float)(long)SPEED_PI_KP_MAX) * 10.0f + 0.5f));
             return true;
         }
-        if (ki < 0.0f || ki > SPEED_PI_KI_MAX) {
-            UartProtocol_Printf("\r\n[ERR] Ki out of range (0..%ld)", (long)(SPEED_PI_KI_MAX * 1000.0f));
+        if (ki < SPEED_PI_KI_MIN || ki > SPEED_PI_KI_MAX) {
+            UartProtocol_Printf("\r\n[ERR] Ki out of range (0..%ld.%ld)",
+                (long)SPEED_PI_KI_MAX, (long)((SPEED_PI_KI_MAX - (float)(long)SPEED_PI_KI_MAX) * 10.0f + 0.5f));
             return true;
         }
         SpeedPI_SetKp(kp);
@@ -86,8 +88,9 @@ bool CommandHandlers_Config_Handle(char *cmd)
         if (s->phase == PHASE_RUNNING || s->phase == PHASE_NEUTRAL) {
             UartProtocol_Print("\r\n[ERR] Stop motor first"); return true;
         }
-        if (fv < 0.0f || fv > SPEED_PI_KP_MAX) {
-            UartProtocol_Printf("\r\n[ERR] Kp out of range (0..%ld)", (long)(SPEED_PI_KP_MAX * 1000.0f)); return true;
+        if (fv < SPEED_PI_KP_MIN || fv > SPEED_PI_KP_MAX) {
+            UartProtocol_Printf("\r\n[ERR] Kp out of range (0..%ld.%ld)",
+                (long)SPEED_PI_KP_MAX, (long)((SPEED_PI_KP_MAX - (float)(long)SPEED_PI_KP_MAX) * 10.0f + 0.5f)); return true;
         }
         SpeedPI_SetKp(fv); UartProtocol_Printf("\r\n[OK] Kp_m=%ld", (long)(fv * 1000.0f)); return true;
     }
@@ -96,8 +99,9 @@ bool CommandHandlers_Config_Handle(char *cmd)
         if (s->phase == PHASE_RUNNING || s->phase == PHASE_NEUTRAL) {
             UartProtocol_Print("\r\n[ERR] Stop motor first"); return true;
         }
-        if (fv < 0.0f || fv > SPEED_PI_KI_MAX) {
-            UartProtocol_Printf("\r\n[ERR] Ki out of range (0..%ld)", (long)(SPEED_PI_KI_MAX * 1000.0f)); return true;
+        if (fv < SPEED_PI_KI_MIN || fv > SPEED_PI_KI_MAX) {
+            UartProtocol_Printf("\r\n[ERR] Ki out of range (0..%ld.%ld)",
+                (long)SPEED_PI_KI_MAX, (long)((SPEED_PI_KI_MAX - (float)(long)SPEED_PI_KI_MAX) * 10.0f + 0.5f)); return true;
         }
         SpeedPI_SetKi(fv); UartProtocol_Printf("\r\n[OK] Ki_m=%ld", (long)(fv * 1000.0f)); return true;
     }
@@ -366,12 +370,8 @@ bool CommandHandlers_Config_Handle(char *cmd)
         }
 
         if (strcmp(sub, " load") == 0 || strcmp(sub, " reload") == 0) {
-            if (s->phase == PHASE_RUNNING || s->phase == PHASE_NEUTRAL) {
-                UartProtocol_Print("\r\n[ERR] Stop motor first");
-                return true;
-            }
-            if (FaultManager_GetLast() != FAULT_NONE) {
-                UartProtocol_Print("\r\n[ERR] Fault latched; use clrerr");
+            if (s->phase != PHASE_STOPPED || MotionControl_ServiceBusy()) {
+                UartProtocol_Print("\r\n[ERR] Stop motor and exit service mode before map/config operation");
                 return true;
             }
             uint8_t map[8];
@@ -456,12 +456,17 @@ bool CommandHandlers_Config_Handle(char *cmd)
             return true;
         }
         if (Storage_SaveConfig(&cfg)) {
-            /* Post-write verification: read back and check sequence. */
+            /* Post-write verification: read back, validate, and check sequence. */
+            PersistentConfig_t verify;
+            if (!Storage_LoadConfig(&verify) || !ConfigSnapshot_Validate(&verify)) {
+                UartProtocol_Print("\r\n[ERR] Saved but verify-read failed validation");
+                return true;
+            }
             uint32_t seq = Storage_GetConfigSequence();
             if (seq == 0U) {
                 UartProtocol_Print("\r\n[WARN] Saved but verify-read found no config");
             } else {
-                UartProtocol_Printf("\r\n[OK] Config saved to Flash seq=%lu (Hall map is separate: 'map save')",
+                UartProtocol_Printf("\r\n[OK] Config saved and verified seq=%lu (Hall map is separate: 'map save')",
                     (unsigned long)seq);
             }
         } else {
@@ -472,12 +477,8 @@ bool CommandHandlers_Config_Handle(char *cmd)
 
     /* Legacy compat: "reload" — reloads Hall map from flash only */
     if (strcmp(cmd, "reload") == 0) {
-        if (s->phase == PHASE_RUNNING || s->phase == PHASE_NEUTRAL) {
-            UartProtocol_Print("\r\n[ERR] Stop motor first");
-            return true;
-        }
-        if (FaultManager_GetLast() != FAULT_NONE) {
-            UartProtocol_Print("\r\n[ERR] Fault latched; use clrerr");
+        if (s->phase != PHASE_STOPPED || MotionControl_ServiceBusy()) {
+            UartProtocol_Print("\r\n[ERR] Stop motor and exit service mode before map/config operation");
             return true;
         }
         uint8_t map[8];
@@ -516,14 +517,18 @@ bool CommandHandlers_Config_Handle(char *cmd)
             UartProtocol_Print("\r\n[ERR] Stop motor and exit service mode before flash/config operation"); return true;
         }
         PersistentConfig_t cfg;
-        if (Storage_LoadConfig(&cfg)) {
-            ConfigSnapshot_ApplyToRuntime(&cfg);
-            uint32_t seq = Storage_GetConfigSequence();
-            UartProtocol_Printf("\r\n[OK] Config loaded from Flash seq=%lu",
-                (unsigned long)seq);
-        } else {
+        if (!Storage_LoadConfig(&cfg)) {
             UartProtocol_Print("\r\n[INFO] No saved config — runtime unchanged");
+            return true;
         }
+        if (!ConfigSnapshot_Validate(&cfg)) {
+            UartProtocol_Print("\r\n[ERR] Saved config failed validation — runtime unchanged");
+            return true;
+        }
+        ConfigSnapshot_ApplyToRuntime(&cfg);
+        uint32_t seq = Storage_GetConfigSequence();
+        UartProtocol_Printf("\r\n[OK] Config loaded from Flash seq=%lu",
+            (unsigned long)seq);
         return true;
     }
     if (strcmp(cmd, "erasecfg") == 0) {

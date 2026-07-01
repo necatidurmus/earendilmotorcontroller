@@ -16,16 +16,6 @@ F411 motor controller (USART2)
 
 İlk sürüm **tek F411 motor controller** (M1) için tasarlanmıştır. Kod mimarisi ileride 4 motorlu (FL/RL/FR/RR) yapıya genişletilebilir.
 
-## H7 vs F446
-
-| Özellik | H7 (h7-main/) | F446 (f446-bridge-test/) |
-|---------|---------------|--------------------------|
-| MCU | STM32H7 | STM32F446 |
-| Motor sayısı | 4 (FL/RL/FR/RR) | 1 (M1), genişletilebilir |
-| Framework | Arduino | Arduino |
-| Amaç | Üretim üst kontrolcü | Test/bridge |
-| Durum | Referans (repo dışı aktif hedef değil) | Aktif test bridge |
-
 ## Varsayılan Pinler (Nucleo-F446RE)
 
 ```text
@@ -65,30 +55,60 @@ F446 USB serial üzerinden şu komutları kabul eder:
 
 ### Doğrudan F411 Passthrough (unlock gerektirmez)
 
-Aşağıdaki komutlar `m1` prefix'i ile doğrudan F411'e forward edilir:
+Aşağıdaki komutlar `m1` prefix'i olmadan doğrudan F411'e forward edilir
+ve bridge service-lock gerektirmez:
 
 ```text
-f50, b50, stop, s, x, brake, rpm 30, rpm -30, rpm 0, pwm 50,
-mode duty, mode speed, hall, status, help, clrerr,
-debug on/off, telper <n>, kick on/off, kickduty <n>,
-kickms <n>, ramp on/off, ramprate <n>, rampms <n>,
-defpwm <n>, map, map validate, map candidate, map default,
-mapreset, reload, defaults, spstat, pid on/off
+f<n>, b<n>
+stop, s
+x / brake (aktif fren; current-limited PSU ile)
+rpm <signed>, pwm <n>
+mode duty / speed, mode normal / control, pid on / off
+hall, status, spstat, help, clrerr
+debug on/off, dbg on/off
+telper <ms>
+kick on / off
+ramp on / off
+map, map validate, map candidate, map default
+mapreset, reload
 ```
 
-### Service Komutları (unlock + arming gerektirir)
+Not: `telper` sadece telemetry interval'ını değiştirir; motor sürüş,
+PI, PWM, Flash veya gate davranışını etkilemez. Bu nedenle
+`telper <n>` ve `m1 telper <n>` service-lock olmadan geçer.
 
-Aşağıdaki komutlar bridge `unlock_service` ve F411 arming gerektirir:
+### Service Komutları (bridge unlock_service + F411 arming gerektirir)
+
+Aşağıdaki komutlar bridge `unlock_service CURRENT_LIMITED_BENCH_SUPPLY`
+ve gerekli olanlarda ek olarak F411 `arm` gerektirir:
 
 ```text
-gatetest <sector> <duty>   (arm gatetest gerekli)
-identify                    (arm service gerekli)
-scan                        (arm service gerekli)
-test                        (arm service gerekli)
-base/boost/pi/kp/ki         (config değişikliği)
-map set/apply/reset/save    (map yazma)
-save/savecfg/loadcfg        (flash işlemleri)
+m1 pi <kp> <ki>              # PI gains
+m1 kp <v> / m1 ki <v>        # PI gain tek başına
+m1 base <b1>..<b8>           # PI base 8-band
+m1 boost <b1>..<b8> <ms>     # PI boost 8-band + ms
+m1 ramp <up_rpm_s> <down_rpm_s>  # speed ramp
+m1 kickduty <n>              # startup kick duty
+m1 kickms <n>                # startup kick süresi
+m1 ramprate <n>              # duty ramp step
+m1 rampms <n>                # duty ramp interval
+m1 defpwm <n>                # bare f/b default duty
+m1 brake                     # aktif fren
+m1 savecfg / m1 save / m1 saveall  # config Flash'a yaz
+m1 loadcfg                   # config Flash'tan yükle
+m1 erasecfg                  # config Flash kayıtlarını sil
+m1 defaults                  # runtime defaults'a dön
+m1 map set / map apply / map discard / map reset
+m1 map save / map load / map edit
+m1 identify                  # (F411 arm service gerekli)
+m1 scan                      # (F411 arm service gerekli)
+m1 test                      # (F411 arm service gerekli)
+m1 gatetest <s> <duty>       # (F411 arm gatetest gerekli)
 ```
+
+`m1 savecfg` motor config'i Flash'a yazar (PI, base, boost, ramp,
+kick, default_pwm, brake_hold_ms, telper). Hall map **ayrıdır**;
+Hall map için `m1 map save` kullanılır.
 
 PI bant formatı: `base` komutu 8 PWM değeri; `boost` komutu 8 PWM
 değeri ve tüm bantlar için ortak tek `ms` değeri alır.

@@ -9,11 +9,14 @@ Safety-critical power-electronics firmware — read before coding.
 |-----------|------|-------|
 | `f411-motor-cube/` | **Active firmware** — STM32Cube/PlatformIO, modular | Yes |
 | `f446-bridge-test/` | F446 single-motor UART bridge test | Yes |
-| `h7-main/` | H7 upper controller | **No** (unless protocol-compat read) |
 | `tools/` | Python GUI/smoke-test | Yes |
 | `docs/` | Safety, protocol, bring-up, TIM1 docs | Yes |
 | `docs/ai/` | Agent workflow, memory, goals, refactor plan | Yes |
 | `ref/` | Archived: legacy Arduino, monolithic firmware, audits | **No** |
+
+H7 target is not part of the active repository flow. The
+`h7-main/` folder has been removed; F411 ↔ F446 ↔ PC GUI is the
+only active path.
 
 **Firmware internals:** `App/` = user motor-control logic. `Core/` =
 CubeMX-style generated skeleton (init only). `main.c` only calls

@@ -7,7 +7,9 @@ return `[ERR] Unknown command`.
 
 This protocol is what the **F446 bridge** (`f446-bridge-test/src/main.cpp`)
 and the **F446 motor GUI** (`tools/f446_motor_gui.py`) speak to the F411.
-The H7 (`h7-main/`) uses the same protocol format but is not an active target in this repo.
+The H7 used the same protocol format but is not part of the active
+repository flow (`h7-main/` has been removed); H7 references in
+this document are kept as historical / format-compat context.
 
 ## Command source
 
@@ -45,12 +47,12 @@ The H7 (`h7-main/`) uses the same protocol format but is not an active target in
 |---------|---------|
 | `rpm` | show target / ramped / measured RPM |
 | `rpm <signed>` | set RPM target (clamped to ±500); `+` forward, `-` reverse, `0` stop. **Must be refreshed periodically** (see below) |
-| `pi <kp> <ki>` | set both PI gains (clamped 0..10) |
+| `pi <kp> <ki>` | set both PI gains (Kp 0..300, Ki 0..200) |
 | `kp <v>` / `ki <v>` | set one gain (compat) |
 | `base <b1> ... <b8>` | feed-forward PWM for 8 equal target-RPM bands across 0..500 RPM; each 0..4000 |
 | `boost <b1> ... <b8> <ms>` | start-boost PWM for the same 8 bands plus one shared duration; PWM 0..4000, ms 0..1000 |
 | `ramp <up> <down>` | target ramp rates (RPM/s) |
-| `spstat` | speed-PI status block |
+| `spstat` | speed-PI status block (includes PI diagnostic: Err_m, Base, P_m, I_m, Out) |
 
 ### Duty-mode kick / ramp (ISSUE-038)
 
@@ -83,7 +85,7 @@ The H7 (`h7-main/`) uses the same protocol format but is not an active target in
 | `map save` | save active Hall map to flash. Motor must be stopped. |
 | `savecfg` / `save` | save runtime config (PI, base, boost, ramp, kick, default_pwm, brake_hold_ms, telper) to flash. Post-write verification reports sequence number. Motor must be stopped. |
 | `saveall` | alias for `savecfg`; does NOT save Hall map (use `map save` separately) |
-| `loadcfg` | load config from flash into runtime, reports saved sequence number. Motor must be stopped. |
+| `loadcfg` | load config from flash into runtime, but only if the saved record passes CRC, magic, version, **and** `ConfigSnapshot_Validate` range checks. Motor must be stopped. On failure, runtime is unchanged. |
 | `erasecfg` | erase all config records from flash (preserves hall map, runtime unchanged). Motor must be stopped. |
 | `cfg` | display current RAM config summary, flash status (VALID/EMPTY), and saved sequence number |
 | `defaults` | reset ALL runtime config to compile-time defaults in RAM. Does NOT auto-save to flash; use `savecfg` to persist after reset. Motor must be stopped. |
@@ -158,7 +160,7 @@ RPM:<m>,RF:<f>,Tcmd:<c>,Trmp:<r>,ERR:<e>,D:<d>,SPD_PH:<p>,FC:<c>,PWM_SET:<s>,PWM
 
 ## H7 wheelbridge compatibility (reference)
 
-The H7 (`h7-main/`, not an active target in this repo) reads each F411
+The H7 (legacy, `h7-main/` removed from this repo) reads each F411
 motor UART line, strips `\r`, splits on `\n`, and prefixes the line
 with the motor name before forwarding to the PC:
 
@@ -236,7 +238,25 @@ RPM:9,T:10,D:36,DIR:F,APP_PH:1,SP:1,BRAKE:0,FC:0,H:5,PWM_SET:36,PWM_ACT:36,QDROP
 [OK] Stop
 > spstat
 --- SPEED PI STATUS ---
-...
+Mode=SPEED Phase=2 Tcmd=20 Trmp=20 F=18
+ComputedDuty=1035 Hall=3
+Kp_m=800 Ki_m=50
+Base 640 660 680 700 720 700 670 640
+Boost 880 900 920 940 960 990 1020 1040 ms=150
+Ramp up=60 down=150
+PI Err_m=2000 Base=700 P_m=16000 I_m=0 Out=1035
+```
+
+PI diagnostic fields (milli-scaled `_m` suffix = value × 1000):
+
+| Field | Meaning |
+|-------|---------|
+| `Err_m` | Ramped target − filtered RPM (×1000) |
+| `Base` | Feed-forward PWM for current target-RPM band |
+| `P_m` | Kp × error contribution (×1000) |
+| `I_m` | Ki × integral contribution (×1000) |
+| `Out` | Final computed duty (Base + P + I, clamped 0..4000) |
+
 > hall
 [INFO] Hall=5 State=0
 > status
