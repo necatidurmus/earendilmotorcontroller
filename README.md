@@ -137,7 +137,10 @@ requested and safety-reviewed.
 * **Service/gate test** blocks motion commands until complete
 * **No hardware break** — do not enable TIM1 break without a physical BKIN pin wired
 * Verify all gate inputs with oscilloscope before connecting motor
-* **Storage** — `savecfg` saves runtime config to flash; `loadcfg` loads from flash.
+* **Storage** — `savecfg`/`save`/`saveall` save runtime config to flash; `loadcfg` loads from flash.
+  `saveall` is an alias for `savecfg` and does NOT save the Hall map (use `map save` separately).
+  `defaults` resets runtime config but does NOT auto-save; use `savecfg` to persist after reset.
+  `reload` reloads Hall map from flash only (not config); `loadcfg` loads motor config.
   Invalid data falls back to safe defaults.
 
 ### Stop vs Emergency Stop

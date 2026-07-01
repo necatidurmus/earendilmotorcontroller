@@ -78,13 +78,15 @@ The H7 (`h7-main/`) uses the same protocol format but is not an active target in
 | `map apply` | apply candidate to active (validates first) |
 | `map discard` | discard candidate |
 | `map default` | load default compile-time map |
-| `map load` / `reload` | load Hall map from flash |
+| `map load` | load Hall map from flash |
+| `reload` | alias for `map load` (Hall map only, NOT config) |
 | `map save` | save active Hall map to flash. Motor must be stopped. |
-| `savecfg` / `save` / `saveall` | snapshot runtime config (PI, base, boost, ramp, kick, ramp, default_pwm, brake_hold_ms, telper) and save to flash. Motor must be stopped. |
-| `loadcfg` | load full config from flash (PI, base, boost, ramp, kick, ramp, default_pwm, brake_hold_ms, telper). Motor must be stopped. |
+| `savecfg` / `save` | save runtime config (PI, base, boost, ramp, kick, default_pwm, brake_hold_ms, telper) to flash. Motor must be stopped. |
+| `saveall` | alias for `savecfg`; does NOT save Hall map (use `map save` separately) |
+| `loadcfg` | load config from flash into runtime. Motor must be stopped. |
 | `erasecfg` | erase all config records from flash (preserves hall map). Motor must be stopped. |
 | `cfg` | display current RAM config summary and flash status |
-| `defaults` | reset ALL config (PI, base, boost, ramp, kick, ramp, default_pwm, brake_hold_ms, telper) to compile-time defaults in RAM. Does NOT auto-save to flash. Motor must be stopped. |
+| `defaults` | reset ALL runtime config to compile-time defaults in RAM. Does NOT auto-save to flash; use `savecfg` to persist after reset. Motor must be stopped. |
 | `mapreset` | legacy alias for `map default` |
 | `identify` | Hall-map identify routine (**requires service arming**) |
 | `scan` | monitor Hall signals for 10 s |

@@ -456,14 +456,14 @@ bool CommandHandlers_Config_Handle(char *cmd)
             return true;
         }
         if (Storage_SaveConfig(&cfg)) {
-            UartProtocol_Print("\r\n[OK] Config saved");
+            UartProtocol_Print("\r\n[OK] Config saved to Flash (Hall map is separate: 'map save')");
         } else {
             UartProtocol_Print("\r\n[ERR] Config save failed");
         }
         return true;
     }
 
-    /* Legacy compat: "reload" */
+    /* Legacy compat: "reload" — reloads Hall map from flash only */
     if (strcmp(cmd, "reload") == 0) {
         if (s->phase == PHASE_RUNNING || s->phase == PHASE_NEUTRAL) {
             UartProtocol_Print("\r\n[ERR] Stop motor first");
@@ -591,7 +591,7 @@ bool CommandHandlers_Config_Handle(char *cmd)
         SpeedPI_SetRamp(DEFAULT_RAMP_UP_RPM_SEC, DEFAULT_RAMP_DOWN_RPM_SEC);
         Telemetry_SetIntervalMs(TELEMETRY_INTERVAL_MS);
         SpeedPI_Reset();
-        UartProtocol_Print("\r\n[OK] Defaults loaded into RAM (not saved to flash)");
+        UartProtocol_Print("\r\n[OK] Defaults applied to RAM. Use 'savecfg' to persist after reset.");
         return true;
     }
 

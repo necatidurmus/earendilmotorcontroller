@@ -59,7 +59,7 @@ F446 bridge, and `tools/f446_motor_gui.py`. Do not silently change them.
 * Commands: `mode duty/speed`, `rpm <signed>`, `f/b/f<n>/b<n>`, `stop`,
   `identify`, `clrerr`, `pi`, `base`, `boost`, `ramp`, `hall`, `status`,
   `map`, `gatetest`, `test`, `scan`, `help` — see `docs/PROTOCOL.md`.
-* `save`/`savecfg`/`saveall` are **disabled** (flash unsafe).
+* `savecfg`/`save`/`saveall` save runtime config to flash (Hall map is separate: `map save`).
 * Legacy aliases: `mode normal`→`duty`, `mode control`→`speed`.
 * Compact telemetry: `RPM:...,T:...,D:...,DIR:...,APP_PH:...,SP:...,
   BRAKE:...,FC:...,H:...,PWM_SET:...,PWM_ACT:...,QDROP:...`
